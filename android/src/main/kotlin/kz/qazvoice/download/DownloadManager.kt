@@ -106,7 +106,7 @@ object DownloadManager {
             if (installed != null) return base + mapOf("status" to "installed", "version" to installed.version)
             return base + mapOf("status" to "notInstalled", "received" to 0L)
         }
-        val total = job.spec.totalBytes
+        val total = job.spec.downloadBytes
         val received = job.lastEvent?.get("received") as? Long ?: downloader.bytesOnDisk(job.spec, store.stagingDir(id))
         return base + when (job.status) {
             "downloading" -> job.lastEvent ?: mapOf("status" to "downloading", "received" to received, "total" to total)
@@ -239,7 +239,7 @@ object DownloadManager {
         store.saveJob(spec, "downloading")
         // Others still queued are told so.
         synchronized(lock) { jobs.values.filter { it !== job && it.status == "queued" }.map { it.spec.id } }.forEach { emitQueued(it) }
-        log("${spec.id}: downloading v${spec.version} (${spec.totalBytes} bytes)")
+        log("${spec.id}: downloading v${spec.version} (${spec.downloadBytes} bytes)")
         val listener = object : Downloader.Listener {
             override fun onProgress(received: Long, total: Long, bytesPerSecond: Double) {
                 emit(spec.id, mapOf("status" to "downloading", "received" to received, "total" to total, "speed" to bytesPerSecond))
@@ -252,7 +252,7 @@ object DownloadManager {
             }
 
             override fun onVerifying() {
-                emit(spec.id, mapOf("status" to "verifying", "received" to spec.totalBytes, "total" to spec.totalBytes))
+                emit(spec.id, mapOf("status" to "verifying", "received" to spec.downloadBytes, "total" to spec.downloadBytes))
             }
 
             override fun log(message: String) = this@DownloadManager.log("${spec.id}: $message")
@@ -287,7 +287,7 @@ object DownloadManager {
             job.error = err
             store.saveJob(spec, "failed", err)
             log("${spec.id}: failed: ${err["message"]}")
-            emit(spec.id, mapOf("status" to "failed", "received" to received(job), "total" to spec.totalBytes, "error" to err))
+            emit(spec.id, mapOf("status" to "failed", "received" to received(job), "total" to spec.downloadBytes, "error" to err))
             notifier.failed(spec, err["message"]?.toString() ?: "")
         } finally {
             gate.current = null

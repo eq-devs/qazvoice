@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 mod text;
+pub mod unpack;
 
 // ───────────────────────────── helpers ─────────────────────────────
 
@@ -168,6 +169,23 @@ pub unsafe extern "C" fn qv_verify_catalog(data: *const u8, len: usize, sig_hex:
     let Ok(sig) = arg(sig_hex) else { return 0 };
     let bytes = std::slice::from_raw_parts(data, len);
     catch_unwind(AssertUnwindSafe(|| verify_catalog(bytes, sig) as i32)).unwrap_or(0)
+}
+
+/// Decompresses a downloaded `.zst` file: `{"size", "sha256"}` of the output,
+/// or an error. Used by the iOS downloader on its background queue.
+///
+/// # Safety
+/// `src`/`dst` must be valid strings.
+#[no_mangle]
+pub unsafe extern "C" fn qv_unzstd(src: *const c_char, dst: *const c_char, max_out: u64) -> *mut c_char {
+    let (src, dst) = match (arg(src), arg(dst)) {
+        (Ok(a), Ok(b)) => (a.to_string(), b.to_string()),
+        _ => return out_json(err_json("argument", "bad path")),
+    };
+    guard_json(|| match unpack::unzstd_file(Path::new(&src), Path::new(&dst), max_out) {
+        Ok((n, h)) => json!({"size": n, "sha256": h}),
+        Err(e) => err_json("storage", e),
+    })
 }
 
 // ───────────────────────────── text (no model) ─────────────────────────────

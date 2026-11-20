@@ -54,11 +54,19 @@ the user force-quits it). iOS shows no download notification; use the
 Models are not bundled with your app. Each one is downloaded on demand from
 [eq-devs/qazvoice-models](https://github.com/eq-devs/qazvoice-models) releases:
 
-| id | used by | download | RAM when loaded |
-|---|---|---|---|
-| `tts-kk` | `QazTts` | 128 MB | ~400 MB |
-| `stt-kk` | `QazStt` | 196 MB | ~600 MB |
-| `punct-kk` | punctuation (optional) | 114 MB | ~300 MB |
+| id | used by | download | on disk | RAM when loaded |
+|---|---|---|---|---|
+| `tts-kk` | `QazTts` | 119 MB | 128 MB | ~400 MB |
+| `stt-kk` | `QazStt` | 153 MB | 196 MB | ~600 MB |
+| `punct-kk` | punctuation (optional) | 75 MB | 114 MB | ~300 MB |
+
+Large files are downloaded zstd-compressed and unpacked in the background; both the
+download and the unpacked file are checked against SHA-256.
+
+Measured on a Pixel 8 Pro: speech recognition runs about 29× faster than real time
+(word error rate 10.6% on FLEURS Kazakh read speech); the voice speaks after about
+0.8 s and synthesizes 1.1–1.6× faster than real time (slower when the phone is hot,
+and on lower-end phones).
 
 ## Quick start
 

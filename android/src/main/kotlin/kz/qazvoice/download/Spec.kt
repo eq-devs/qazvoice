@@ -3,7 +3,16 @@ package kz.qazvoice.download
 /** One download location of a file; [headers] go to this URL's host only. */
 data class UrlSpec(val url: String, val headers: Map<String, String> = emptyMap())
 
-data class FileSpec(val name: String, val size: Long, val sha256: String, val urls: List<UrlSpec>)
+/** A zstd-compressed copy of a file: downloaded instead, then unpacked. */
+data class ZstSpec(val size: Long, val sha256: String, val urls: List<UrlSpec>)
+
+data class FileSpec(val name: String, val size: Long, val sha256: String, val urls: List<UrlSpec>, val zst: ZstSpec? = null) {
+    /** Bytes that travel over the network for this file. */
+    val downloadSize: Long get() = zst?.size ?: size
+
+    /** The compressed file as a download of its own. */
+    fun zstFile(): FileSpec? = zst?.let { FileSpec("$name.zst", it.size, it.sha256, it.urls) }
+}
 
 /** A model download: what the Dart side sends with `download`. */
 data class JobSpec(
@@ -15,6 +24,9 @@ data class JobSpec(
 ) {
     val totalBytes: Long get() = files.sumOf { it.size }
 
+    /** Bytes downloaded in total (compressed sizes where available). */
+    val downloadBytes: Long get() = files.sumOf { it.downloadSize }
+
     /** Throws [IllegalArgumentException] if anything could escape the model directory. */
     fun validate() {
         require(ID.matches(id)) { "bad model id" }
@@ -24,7 +36,10 @@ data class JobSpec(
             require(f.size in 0..MAX_FILE) { "bad size" }
             require(SHA.matches(f.sha256)) { "bad sha256 for ${f.name}" }
             require(f.urls.isNotEmpty()) { "no urls for ${f.name}" }
-            for (u in f.urls) {
+            f.zst?.let { z ->
+                require(z.size in 0..MAX_FILE && SHA.matches(z.sha256) && z.urls.isNotEmpty()) { "bad zst for ${f.name}" }
+            }
+            for (u in f.urls + (f.zst?.urls ?: emptyList())) {
                 val scheme = u.url.substringBefore(':').lowercase()
                 require(scheme == "https" || scheme == "http") { "unsupported url scheme" }
             }
@@ -49,6 +64,12 @@ data class JobSpec(
             n != "installed.json" && !n.endsWith(".part") && !n.endsWith(".meta") && n != "job.json"
 
         @Suppress("UNCHECKED_CAST")
+        private fun urls(v: Any?): List<UrlSpec> = (v as List<Map<*, *>>).map { u ->
+            UrlSpec(u["url"] as String, ((u["headers"] as? Map<*, *>) ?: emptyMap<String, String>())
+                .entries.associate { (k, v) -> k.toString() to v.toString() })
+        }
+
+        @Suppress("UNCHECKED_CAST")
         fun fromMap(m: Map<*, *>): JobSpec = JobSpec(
             id = m["id"] as String,
             version = (m["version"] as Number).toInt(),
@@ -59,9 +80,9 @@ data class JobSpec(
                     name = f["name"] as String,
                     size = (f["size"] as Number).toLong(),
                     sha256 = (f["sha256"] as String).lowercase(),
-                    urls = (f["urls"] as List<Map<*, *>>).map { u ->
-                        UrlSpec(u["url"] as String, ((u["headers"] as? Map<*, *>) ?: emptyMap<String, String>())
-                            .entries.associate { (k, v) -> k.toString() to v.toString() })
+                    urls = urls(f["urls"]),
+                    zst = (f["zst"] as? Map<*, *>)?.let { z ->
+                        ZstSpec((z["size"] as Number).toLong(), (z["sha256"] as String).lowercase(), urls(z["urls"]))
                     },
                 )
             },

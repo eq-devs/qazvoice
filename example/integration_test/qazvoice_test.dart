@@ -84,7 +84,7 @@ void main() {
     await sub.cancel();
     expect(m.isInstalled, isTrue);
     expect(states, containsAll(['Downloading', 'Installed']));
-    expect(m.installedSize, m.downloadSize);
+    expect(m.installedSize, m.diskSize);
     // Progress updates are throttled to about 5 a second.
     if (progress.length > 20) {
       final span = progress.length;
@@ -116,6 +116,23 @@ void main() {
     // ignore: avoid_print
     print('tts: max UI-isolate stall ${stall.inMilliseconds} ms');
     expect(stall, lessThan(const Duration(milliseconds: 100)));
+
+    // Speed inside the app (foreground): first chunk latency and real-time factor.
+    const para =
+        'Бүгін Алматыда ауа райы жақсы, күн ашық болады. Ертең жаңбыр жаууы мүмкін, '
+        'сондықтан қолшатыр алып шығыңыз. Қалада жиырма бес мың жаңа ағаш отырғызылды.';
+    final sw = Stopwatch()..start();
+    Duration? firstChunk;
+    var samples = 0;
+    await for (final c in tts.synthesize(para)) {
+      firstChunk ??= sw.elapsed;
+      samples += c.pcm.length;
+    }
+    final audioSecs = samples / tts.sampleRate;
+    // ignore: avoid_print
+    print('tts speed: first chunk ${firstChunk!.inMilliseconds} ms, '
+        '${(audioSecs / (sw.elapsedMilliseconds / 1000)).toStringAsFixed(2)}x real time '
+        '(${audioSecs.toStringAsFixed(1)} s audio)');
 
     final seen = <int>{};
     tts.current.addListener(() {

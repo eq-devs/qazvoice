@@ -26,3 +26,5 @@ qazstt-core = { path = "../qazstt-core", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+ruzstd = "0.9"
+sha2 = "0.10"

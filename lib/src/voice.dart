@@ -13,7 +13,7 @@ import 'native/ffi.dart';
 import 'platform.dart';
 
 /// Version of this plugin.
-const String qazvoicePluginVersion = '0.0.2';
+const String qazvoicePluginVersion = '0.0.3';
 
 /// Why a download is not moving right now.
 enum WaitReason {
@@ -386,8 +386,11 @@ class QazModel {
   /// Progress while downloading, at most 5 updates a second.
   Stream<DownloadProgress> get progress => _progress.stream;
 
-  /// Bytes `download()` fetches in total.
-  int get downloadSize => _spec.size;
+  /// Bytes `download()` fetches in total (compressed files where available).
+  int get downloadSize => _spec.downloadSize;
+
+  /// Bytes the model takes on disk once installed (uncompressed).
+  int get diskSize => _spec.size;
 
   /// Bytes on disk when installed, else 0.
   int get installedSize => _installedBytes;
@@ -925,9 +928,32 @@ class _QazVoiceImpl implements QazInternals {
                   'headers': mirror.headers
                 }
             ],
+            if (f.zstSize != null)
+              'zst': {
+                'size': f.zstSize,
+                'sha256': f.zstSha256,
+                'urls': [
+                  for (final mirror in ordered)
+                    {
+                      'url': mirror.resolve(spec, '${f.name}.zst').toString(),
+                      'headers': mirror.headers
+                    }
+                ],
+              },
           }
       ],
     });
+  }
+
+  /// Bytes still to download, plus room to unpack the largest compressed file
+  /// next to its download.
+  static int _required(QazModel m, int have) {
+    final left = (m.downloadSize - have).clamp(0, 1 << 50);
+    if (left == 0) return 0;
+    final room = m.spec.files
+        .where((f) => f.zstSize != null)
+        .fold<int>(0, (a, f) => f.size > a ? f.size : a);
+    return left + room;
   }
 
   Future<DeviceCheck> checkDevice(String id) async {
@@ -958,7 +984,7 @@ class _QazVoiceImpl implements QazInternals {
       totalRamBytes: (d['totalRam'] as num?)?.toInt() ?? 0,
       availableRamBytes: (d['availRam'] as num?)?.toInt() ?? 0,
       freeBytes: (d['freeBytes'] as num?)?.toInt() ?? 0,
-      requiredBytes: (m.downloadSize - have).clamp(0, 1 << 50),
+      requiredBytes: _required(m, have),
       requiredRamBytes: m.spec.ramMb * 1024 * 1024,
       nativeLibrary: lib,
     );

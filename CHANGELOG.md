@@ -1,3 +1,14 @@
+## 0.0.3
+
+- Smaller downloads: large model files are fetched as zstd copies and unpacked in
+  the background (Android download service / iOS download queue, never the UI
+  thread). Both the compressed file and the unpacked result are checked against
+  SHA-256. Downloads: speech recognition 196 → 153 MB, punctuation 114 → 75 MB,
+  voice 128 → 119 MB.
+- `QazModel.downloadSize` is now the bytes downloaded; new `QazModel.diskSize` is
+  the installed size. `checkDevice` includes room for unpacking.
+- The voice runs once while loading (warm-up), so the first sentence starts sooner.
+
 ## 0.0.2
 
 - iOS support (iOS 15.1+, arm64 devices and Apple-silicon simulators), same Dart API:

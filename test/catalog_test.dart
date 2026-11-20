@@ -13,6 +13,10 @@ void main() {
     expect(tts.kind, QazModelKind.tts);
     expect(tts.files.map((f) => f.name), ['voice.onnx', 'voice.onnx.json']);
     expect(tts.size, 127864258 + 5990);
+    // The voice is downloaded as zstd (smaller), the small JSON as is.
+    expect(tts.files.first.zstSize, isNotNull);
+    expect(tts.files.last.zstSize, isNull);
+    expect(tts.downloadSize, lessThan(tts.size));
     expect(tts.name('kk'), 'Қазақша дауыс');
     expect(tts.attribution, contains('ISSAI'));
     expect(c.models['stt-kk']!.files.length, 5);

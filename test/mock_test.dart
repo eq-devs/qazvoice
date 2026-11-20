@@ -46,7 +46,7 @@ void main() {
       expect(m.downloadSize, greaterThan(100 << 20));
       expect(() => QazVoice.model('nope'), throwsArgumentError);
       expect(QazVoice.attributions.first.text, isNotEmpty);
-      expect(QazVoice.version, '0.0.2');
+      expect(QazVoice.version, '0.0.3');
     });
 
     test('download goes through progress to installed', () async {
@@ -66,7 +66,7 @@ void main() {
       expect(progress.last.eta, isNotNull);
       // Downloading an installed model is a no-op.
       await m.download();
-      expect(await QazVoice.storageUsed, m.downloadSize);
+      expect(await QazVoice.storageUsed, m.diskSize);
     });
 
     test('concurrent download calls share one future and one job', () async {
@@ -125,7 +125,9 @@ void main() {
     test('device check', () async {
       final d = await QazVoice.checkDevice('tts-kk');
       expect(d.ok, isTrue, reason: '${d.problems}');
-      expect(d.requiredBytes, QazVoice.model('tts-kk').downloadSize);
+      final m = QazVoice.model('tts-kk');
+      // Download plus room to unpack the compressed voice next to it.
+      expect(d.requiredBytes, m.downloadSize + m.spec.files.first.size);
     });
   });
 

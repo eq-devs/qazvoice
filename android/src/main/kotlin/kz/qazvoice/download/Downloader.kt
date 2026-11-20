@@ -37,6 +37,8 @@ class Downloader(
     private val readTimeoutMs: Int = 30_000,
     private val progressIntervalMs: Long = 200,
     private val sleeper: (Long, Control) -> Unit = ::interruptibleSleep,
+    /** zstd → file: returns (bytes, sha256 hex) or throws. Native on Android. */
+    private val unzstd: (File, File, Long) -> Pair<Long, String> = NativeUnpack::unzstdFile,
 ) {
     interface NetworkGate {
         /** Whether a download may run now. */
@@ -83,20 +85,29 @@ class Downloader(
     private class Restart(msg: String) : IOException(msg)
 
     /** Bytes already in [staging] for [job] (verified files + partials). */
+    /** Downloaded bytes already in [staging] for [job] (verified files + partials). */
     fun bytesOnDisk(job: JobSpec, staging: File): Long = job.files.sumOf { f ->
         val done = File(staging, f.name)
-        if (done.length() == f.size) f.size else min(File(staging, "${f.name}.part").length(), f.size)
+        val z = f.zstFile()
+        when {
+            done.exists() && done.length() == f.size -> f.downloadSize
+            z != null && File(staging, z.name).length() == z.size -> z.size
+            else -> min(File(staging, "${(z ?: f).name}.part").length(), f.downloadSize)
+        }
     }
 
     /**
      * Runs [job] to completion: afterwards every file is in [staging] under its
-     * name and verified. Throws [DownloadException] (incl. [StoppedException]).
+     * name and verified. Files with a zstd copy are downloaded compressed
+     * (resumable, checked against the compressed SHA-256), unpacked on this
+     * thread and checked against the original SHA-256.
+     * Throws [DownloadException] (incl. [StoppedException]).
      */
     fun run(job: JobSpec, staging: File, listener: Listener, control: Control) {
         job.validate()
         staging.mkdirs()
-        val total = job.totalBytes
-        val verified = job.files.filter { File(staging, it.name).let { d -> d.exists() && d.length() == it.size } }.sumOf { it.size }
+        val total = job.downloadBytes
+        val verified = job.files.filter { File(staging, it.name).let { d -> d.exists() && d.length() == it.size } }.sumOf { it.downloadSize }
         val progress = Progress(total, verified, listener, progressIntervalMs)
         checkSpace(job, staging, bytesOnDisk(job, staging))
         for (f in job.files) {
@@ -104,8 +115,24 @@ class Downloader(
             val done = File(staging, f.name)
             if (done.length() == f.size && done.exists()) continue
             done.delete()
-            fetchWithRetries(job, f, staging, progress, control)
-            progress.endFile(f.size)
+            val z = f.zstFile()
+            if (z == null) {
+                fetchWithRetries(job, f, staging, progress, control)
+            } else {
+                var unpacked = false
+                for (attempt in 0..1) {
+                    val packed = File(staging, z.name)
+                    if (!(packed.exists() && packed.length() == z.size)) {
+                        packed.delete()
+                        fetchWithRetries(job, z, staging, progress, control)
+                    }
+                    control.check()
+                    listener.onVerifying()
+                    if (unpack(f, packed, staging, listener)) { unpacked = true; break }
+                }
+                if (!unpacked) throw DownloadException("checksum", "${f.name}: unpacked file does not match", mapOf("file" to f.name))
+            }
+            progress.endFile(f.downloadSize)
         }
         listener.onVerifying()
         // Re-check sizes of the verified files (cheap) before reporting success.
@@ -117,8 +144,31 @@ class Downloader(
         }
     }
 
+    /** `<name>.zst` → `<name>`; false (and both files gone) if the result is wrong. */
+    private fun unpack(f: FileSpec, packed: File, staging: File, listener: Listener): Boolean {
+        val tmp = File(staging, "${f.name}.unpack")
+        val (n, sha) = try {
+            unzstd(packed, tmp, f.size)
+        } catch (e: Exception) {
+            listener.log("${f.name}: unpack failed: ${e.message}")
+            tmp.delete(); packed.delete()
+            if (isDiskFull(e)) throw DownloadException("storage", "storage full", mapOf("needed" to f.size, "available" to freeBytes(staging)), e)
+            return false
+        }
+        if (n != f.size || sha != f.sha256) {
+            listener.log("${f.name}: unpacked file does not match the catalog")
+            tmp.delete(); packed.delete()
+            return false
+        }
+        if (!tmp.renameTo(File(staging, f.name))) throw DownloadException("storage", "cannot rename ${tmp.name}")
+        packed.delete()
+        return true
+    }
+
     private fun checkSpace(job: JobSpec, staging: File, have: Long) {
-        val need = job.totalBytes - have + MARGIN
+        // Still to download, plus room to unpack each compressed file next to its .zst.
+        val unpackRoom = job.files.filter { it.zst != null && File(staging, it.name).length() != it.size }.maxOfOrNull { it.size } ?: 0
+        val need = job.downloadBytes - have + unpackRoom + MARGIN
         val free = freeBytes(staging)
         if (free in 0 until need) {
             throw DownloadException("storage", "not enough free storage", mapOf("needed" to need, "available" to free))

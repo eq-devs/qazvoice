@@ -141,8 +141,65 @@ class DownloaderTest {
         override fun log(message: String) { logs += message }
     }
 
-    private fun downloader(gate: Downloader.NetworkGate = Gate(), free: (File) -> Long = { Long.MAX_VALUE / 4 }, attempts: Int = 4) =
-        Downloader(gate, free, maxAttempts = attempts, baseBackoffMs = 5, maxBackoffMs = 20, readTimeoutMs = 2000, progressIntervalMs = 0)
+    /** Test "zstd": the packed bytes are the original reversed. */
+    private val fakeUnzstd: (File, File, Long) -> Pair<Long, String> = { src, dst, _ ->
+        val out = src.readBytes().reversedArray()
+        dst.writeBytes(out)
+        out.size.toLong() to sha(out)
+    }
+
+    private fun downloader(
+        gate: Downloader.NetworkGate = Gate(),
+        free: (File) -> Long = { Long.MAX_VALUE / 4 },
+        attempts: Int = 4,
+        unzstd: (File, File, Long) -> Pair<Long, String> = fakeUnzstd,
+    ) = Downloader(gate, free, maxAttempts = attempts, baseBackoffMs = 5, maxBackoffMs = 20, readTimeoutMs = 2000, progressIntervalMs = 0, unzstd = unzstd)
+
+    private fun zfile(name: String, data: ByteArray, packedPath: String) = FileSpec(
+        name, data.size.toLong(), sha(data), listOf(UrlSpec(url("/raw-not-used"))),
+        ZstSpec(data.size.toLong(), sha(data.reversedArray()), listOf(UrlSpec(url(packedPath)))))
+
+    @Test
+    fun compressedFileIsDownloadedUnpackedAndVerified() {
+        behaviors["/a.zst"] = Behavior(dataA.reversedArray(), dropAfter = 900_000)
+        val ev = Events()
+        downloader().run(job(zfile("a.onnx", dataA, "/a.zst")), staging(), ev, Downloader.Control())
+        assertArrayEquals(dataA, File(staging(), "a.onnx").readBytes())
+        assertFalse(File(staging(), "a.onnx.zst").exists())
+        assertFalse(File(staging(), "a.onnx.unpack").exists())
+        assertTrue(requests.none { it.startsWith("/raw-not-used") })
+        assertTrue(requests.any { it.startsWith("/a.zst bytes=") }) // resumed after the drop
+        assertTrue(ev.verifying)
+    }
+
+    @Test
+    fun badUnpackResultRefetchesOnceThenFails() {
+        behaviors["/a.zst"] = Behavior(dataB.reversedArray())
+        var calls = 0
+        val wrong: (File, File, Long) -> Pair<Long, String> = { _, dst, _ -> calls++; dst.writeBytes(byteArrayOf(1)); 1L to "0".repeat(64) }
+        try {
+            downloader(unzstd = wrong).run(job(zfile("b.json", dataB, "/a.zst")), staging(), Events(), Downloader.Control())
+            fail()
+        } catch (e: DownloadException) {
+            assertEquals("checksum", e.kind)
+        }
+        assertEquals(2, calls)
+        assertEquals(2, requests.count { it.startsWith("/a.zst") })
+        assertFalse(File(staging(), "b.json").exists())
+        assertFalse(File(staging(), "b.json.unpack").exists())
+    }
+
+    @Test
+    fun downloadedButNotUnpackedIsNotFetchedAgain() {
+        behaviors["/a.zst"] = Behavior(dataB.reversedArray())
+        staging().mkdirs()
+        File(staging(), "b.json.zst").writeBytes(dataB.reversedArray())
+        val j = job(zfile("b.json", dataB, "/a.zst"))
+        assertEquals(dataB.size.toLong(), downloader().bytesOnDisk(j, staging()))
+        downloader().run(j, staging(), Events(), Downloader.Control())
+        assertTrue(requests.isEmpty())
+        assertArrayEquals(dataB, File(staging(), "b.json").readBytes())
+    }
 
     private fun staging() = File(dir, "staging")
 

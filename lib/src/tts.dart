@@ -141,7 +141,14 @@ class QazTts extends ModelEngine {
   bool get pinned => _speech != null;
 
   @override
-  Future<void> doLoad() => _backend.load(_voicePath, _threads);
+  Future<void> doLoad() async {
+    await _backend.load(_voicePath, _threads);
+    // One short warm-up run: ONNX Runtime sets up its kernels and buffers on
+    // the first inference, so the user's first sentence starts sooner.
+    try {
+      await _backend.synth('сәлем.', 0, 1.0);
+    } catch (_) {}
+  }
 
   @override
   Future<void> doUnload() => _backend.unload();

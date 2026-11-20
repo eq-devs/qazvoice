@@ -171,7 +171,7 @@ class ModelCard extends StatelessWidget {
                           Text(model.name('kk'),
                               style: theme.textTheme.titleMedium),
                           Text(
-                              '${model.id} · v${model.version} · ${formatBytes(model.downloadSize)}',
+                              '${model.id} · v${model.version} · жүктеу ${formatBytes(model.downloadSize)} · орын ${formatBytes(model.diskSize)}',
                               style: theme.textTheme.bodySmall),
                         ]),
                   ),

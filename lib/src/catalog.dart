@@ -58,7 +58,11 @@ class QazMirror {
 /// One file of a model.
 class ModelFile {
   const ModelFile(
-      {required this.name, required this.size, required this.sha256});
+      {required this.name,
+      required this.size,
+      required this.sha256,
+      this.zstSize,
+      this.zstSha256});
 
   /// File name inside the model directory.
   final String name;
@@ -68,6 +72,16 @@ class ModelFile {
 
   /// Lowercase hex SHA-256 of the file.
   final String sha256;
+
+  /// Size of the zstd-compressed copy `<name>.zst`, if the catalog has one.
+  /// The plugin downloads that instead and unpacks it in the background.
+  final int? zstSize;
+
+  /// SHA-256 of the compressed copy.
+  final String? zstSha256;
+
+  /// Bytes that are downloaded for this file.
+  int get downloadSize => zstSize ?? size;
 
   Map<String, Object> toJson() =>
       {'name': name, 'size': size, 'sha256': sha256};
@@ -113,8 +127,11 @@ class ModelSpec {
   /// Approximate memory needed to run the model, in MB (0 = unknown).
   final int ramMb;
 
-  /// Sum of all file sizes.
+  /// Sum of all file sizes (installed size).
   int get size => files.fold(0, (a, f) => a + f.size);
+
+  /// Bytes downloaded to install (compressed where available).
+  int get downloadSize => files.fold(0, (a, f) => a + f.downloadSize);
 
   /// The display name in [lang], falling back to English, then the id.
   String name([String lang = 'en']) => names[lang] ?? names['en'] ?? id;
@@ -177,7 +194,27 @@ class Catalog {
           !_shaRe.hasMatch(sha)) {
         return null;
       }
-      parsed.add(ModelFile(name: name, size: size, sha256: sha));
+      int? zSize;
+      String? zSha;
+      final z = f['zst'];
+      if (z is Map) {
+        final zs = z['size'], zh = z['sha256'];
+        if (zs is! int ||
+            zs < 0 ||
+            zs > maxModelFileBytes ||
+            zh is! String ||
+            !_shaRe.hasMatch(zh)) {
+          return null;
+        }
+        zSize = zs;
+        zSha = zh;
+      }
+      parsed.add(ModelFile(
+          name: name,
+          size: size,
+          sha256: sha,
+          zstSize: zSize,
+          zstSha256: zSha));
     }
     if (parsed.isEmpty) return null;
     final names = <String, String>{};

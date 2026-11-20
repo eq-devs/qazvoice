@@ -136,12 +136,21 @@ class ModelStore(val root: File) {
             .put("id", s.id).put("version", s.version).put("name", s.name).put("wifiOnly", s.wifiOnly)
             .put("files", JSONArray().apply {
                 s.files.forEach { f ->
-                    put(JSONObject().put("name", f.name).put("size", f.size).put("sha256", f.sha256)
-                        .put("urls", JSONArray().apply {
-                            f.urls.forEach { u -> put(JSONObject().put("url", u.url).put("headers", JSONObject(u.headers))) }
-                        }))
+                    val o = JSONObject().put("name", f.name).put("size", f.size).put("sha256", f.sha256).put("urls", urlsJson(f.urls))
+                    f.zst?.let { z -> o.put("zst", JSONObject().put("size", z.size).put("sha256", z.sha256).put("urls", urlsJson(z.urls))) }
+                    put(o)
                 }
             })
+
+        private fun urlsJson(urls: List<UrlSpec>) = JSONArray().apply {
+            urls.forEach { u -> put(JSONObject().put("url", u.url).put("headers", JSONObject(u.headers))) }
+        }
+
+        private fun urlsFrom(a: JSONArray): List<UrlSpec> = (0 until a.length()).map { j ->
+            val u = a.getJSONObject(j)
+            val h = u.optJSONObject("headers")
+            UrlSpec(u.getString("url"), h?.keys()?.asSequence()?.associateWith { h.getString(it) } ?: emptyMap())
+        }
 
         fun specFromJson(o: JSONObject): JobSpec {
             val files = o.getJSONArray("files")
@@ -152,13 +161,8 @@ class ModelStore(val root: File) {
                 wifiOnly = o.optBoolean("wifiOnly", false),
                 files = (0 until files.length()).map { i ->
                     val f = files.getJSONObject(i)
-                    val urls = f.getJSONArray("urls")
-                    FileSpec(f.getString("name"), f.getLong("size"), f.getString("sha256"),
-                        (0 until urls.length()).map { j ->
-                            val u = urls.getJSONObject(j)
-                            val h = u.optJSONObject("headers")
-                            UrlSpec(u.getString("url"), h?.keys()?.asSequence()?.associateWith { h.getString(it) } ?: emptyMap())
-                        })
+                    FileSpec(f.getString("name"), f.getLong("size"), f.getString("sha256"), urlsFrom(f.getJSONArray("urls")),
+                        f.optJSONObject("zst")?.let { z -> ZstSpec(z.getLong("size"), z.getString("sha256"), urlsFrom(z.getJSONArray("urls"))) })
                 },
             )
         }

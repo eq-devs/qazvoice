@@ -5,7 +5,16 @@ import UIKit
 
 /// One download location of a file; headers go to this URL's origin only.
 struct UrlSpec: Codable { let url: String; let headers: [String: String] }
-struct FileSpec: Codable { let name: String; let size: Int64; let sha256: String; let urls: [UrlSpec] }
+/// A zstd-compressed copy of a file: downloaded instead, then unpacked.
+struct ZstSpec: Codable { let size: Int64; let sha256: String; let urls: [UrlSpec] }
+
+struct FileSpec: Codable {
+  let name: String; let size: Int64; let sha256: String; let urls: [UrlSpec]; var zst: ZstSpec? = nil
+  /// Bytes that travel over the network.
+  var downloadSize: Int64 { zst?.size ?? size }
+  /// URLs actually downloaded (the compressed copy's when there is one).
+  var fetchUrls: [UrlSpec] { zst?.urls ?? urls }
+}
 
 struct JobSpec: Codable {
   let id: String
@@ -14,6 +23,7 @@ struct JobSpec: Codable {
   let wifiOnly: Bool
   let files: [FileSpec]
   var totalBytes: Int64 { files.reduce(0) { $0 + $1.size } }
+  var downloadBytes: Int64 { files.reduce(0) { $0 + $1.downloadSize } }
 
   static let idRe = try! NSRegularExpression(pattern: "^[a-z0-9][a-z0-9-]{0,40}$")
   static let nameRe = try! NSRegularExpression(pattern: "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,100}$")
@@ -43,7 +53,12 @@ struct JobSpec: Codable {
             JobSpec.matches(JobSpec.shaRe, f.sha256), !f.urls.isEmpty else {
         throw DownloadError("argument", "bad file \(f.name)")
       }
-      for u in f.urls {
+      if let z = f.zst {
+        guard z.size >= 0, z.size <= JobSpec.maxFile, JobSpec.matches(JobSpec.shaRe, z.sha256), !z.urls.isEmpty else {
+          throw DownloadError("argument", "bad zst for \(f.name)")
+        }
+      }
+      for u in f.urls + (f.zst?.urls ?? []) {
         guard let s = URL(string: u.url)?.scheme?.lowercased(), s == "https" || s == "http" else {
           throw DownloadError("argument", "unsupported url")
         }
@@ -59,9 +74,15 @@ struct JobSpec: Codable {
             let sha = f["sha256"] as? String, let urls = f["urls"] as? [[String: Any]] else {
         throw DownloadError("argument", "bad file")
       }
-      return FileSpec(name: n, size: size, sha256: sha.lowercased(), urls: urls.map {
-        UrlSpec(url: $0["url"] as? String ?? "", headers: ($0["headers"] as? [String: String]) ?? [:])
-      })
+      func urlList(_ a: [[String: Any]]) -> [UrlSpec] {
+        a.map { UrlSpec(url: $0["url"] as? String ?? "", headers: ($0["headers"] as? [String: String]) ?? [:]) }
+      }
+      var zst: ZstSpec?
+      if let z = f["zst"] as? [String: Any], let zs = (z["size"] as? NSNumber)?.int64Value,
+         let zh = z["sha256"] as? String, let zu = z["urls"] as? [[String: Any]] {
+        zst = ZstSpec(size: zs, sha256: zh.lowercased(), urls: urlList(zu))
+      }
+      return FileSpec(name: n, size: size, sha256: sha.lowercased(), urls: urlList(urls), zst: zst)
     }
     return JobSpec(id: id, version: version, name: (m["name"] as? String) ?? id,
                    wifiOnly: (m["wifiOnly"] as? Bool) ?? false, files: fs)
@@ -311,7 +332,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
       return base.merging(["status": "notInstalled", "received": 0]) { a, _ in a }
     }
     let rec = received(j)
-    let total = j.spec.totalBytes
+    let total = j.spec.downloadBytes
     let s: [String: Any]
     switch j.status {
     case "downloading": s = ["status": "downloading", "received": rec, "total": total, "speed": j.speed]
@@ -420,10 +441,10 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
 
   private func verifiedBytes(_ j: Job) -> Int64 {
     j.spec.files.filter { store.size(store.stagingDir(j.spec.id).appendingPathComponent($0.name)) == $0.size }
-      .reduce(0) { $0 + $1.size }
+      .reduce(0) { $0 + $1.downloadSize }
   }
 
-  private func received(_ j: Job) -> Int64 { min(j.spec.totalBytes, verifiedBytes(j) + (j.status == "downloading" || j.status == "paused" ? j.currentWritten : 0)) }
+  private func received(_ j: Job) -> Int64 { min(j.spec.downloadBytes, verifiedBytes(j) + (j.status == "downloading" || j.status == "paused" ? j.currentWritten : 0)) }
 
   private func markPaused(_ j: Job) {
     j.status = "paused"; j.task = nil; j.stopping = nil
@@ -444,7 +465,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     if running == j.spec.id { running = nil }
     store.saveJob(j.spec, "failed", e.map)
     log("\(j.spec.id): failed: \(e.message)")
-    emit(j.spec.id, ["status": "failed", "received": received(j), "total": j.spec.totalBytes, "error": e.map])
+    emit(j.spec.id, ["status": "failed", "received": received(j), "total": j.spec.downloadBytes, "error": e.map])
     pump()
   }
 
@@ -459,7 +480,9 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     for other in order where other != id && jobs[other]?.status == "queued" {
       emit(other, stateLocked(other))
     }
-    let need = j.spec.totalBytes - verifiedBytes(j) + (16 << 20)
+    // Room to unpack the largest compressed file next to its download.
+    let room = j.spec.files.filter { $0.zst != nil }.map { $0.size }.max() ?? 0
+    let need = j.spec.downloadBytes - verifiedBytes(j) + room + (16 << 20)
     let free = store.freeBytes()
     if free >= 0 && free < need {
       fail(j, DownloadError("storage", "not enough free storage", ["needed": need, "available": free])); return
@@ -478,7 +501,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     j.fileIndex = i
     j.currentWritten = 0
     let f = j.spec.files[i]
-    let u = f.urls[j.mirror]
+    let u = f.fetchUrls[j.mirror]
     guard let url = URL(string: u.url) else { fail(j, DownloadError("argument", "bad url")); return }
     var req = URLRequest(url: url)
     req.allowsCellularAccess = !j.spec.wifiOnly
@@ -498,7 +521,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
   }
 
   private func install(_ j: Job) {
-    emit(j.spec.id, ["status": "verifying", "received": j.spec.totalBytes, "total": j.spec.totalBytes])
+    emit(j.spec.id, ["status": "verifying", "received": j.spec.totalBytes, "total": j.spec.downloadBytes])
     do {
       guard jobs[j.spec.id] === j, j.stopping == nil else { return }
       try store.install(j.spec)
@@ -536,9 +559,9 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     guard let id = running, let j = jobs[id], j.status == "downloading" else { return }
     let allowed = pathOK && !(j.spec.wifiOnly && pathExpensive)
     if !allowed {
-      emit(id, ["status": "waiting", "reason": pathOK ? "wifi" : "network", "received": received(j), "total": j.spec.totalBytes])
+      emit(id, ["status": "waiting", "reason": pathOK ? "wifi" : "network", "received": received(j), "total": j.spec.downloadBytes])
     } else {
-      emit(id, ["status": "downloading", "received": received(j), "total": j.spec.totalBytes, "speed": j.speed])
+      emit(id, ["status": "downloading", "received": received(j), "total": j.spec.downloadBytes, "speed": j.speed])
     }
   }
 
@@ -554,7 +577,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     j.attempt += 1
     if fatalForMirror || j.attempt >= 5 {
       switchMirror(j)
-      if j.mirror >= f.urls.count {
+      if j.mirror >= f.fetchUrls.count {
         var extras: [String: Any] = [:]
         if let s = status { extras["status"] = s }
         fail(j, DownloadError("network", why, extras)); return
@@ -587,7 +610,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
       }
       if now.timeIntervalSince(j.lastEmit) >= 0.2 {
         j.lastEmit = now
-        self.emit(j.spec.id, ["status": "downloading", "received": self.received(j), "total": j.spec.totalBytes, "speed": j.speed])
+        self.emit(j.spec.id, ["status": "downloading", "received": self.received(j), "total": j.spec.downloadBytes, "speed": j.speed])
       }
     }
   }
@@ -623,7 +646,19 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
           self.q.async { self.pendingWork -= 1; self.flushBackgroundCompletion() }
           UIApplication.shared.endBackgroundTask(bgTask)
         }
-        let ok = self.store.size(tmp) == f.size && sha256Hex(of: tmp) == f.sha256
+        var ok = self.store.size(tmp) == f.downloadSize && sha256Hex(of: tmp) == (f.zst?.sha256 ?? f.sha256)
+        if ok, f.zst != nil {
+          // Unpack the verified .zst and check the result against the original SHA-256.
+          let out = staging.appendingPathComponent("\(f.name).unpack")
+          let r = NativeUnpack.unzstd(src: tmp, dst: out, maxOut: f.size)
+          try? FileManager.default.removeItem(at: tmp)
+          if let r = r, r.size == f.size, r.sha256 == f.sha256 {
+            try? FileManager.default.moveItem(at: out, to: tmp)
+          } else {
+            try? FileManager.default.removeItem(at: out)
+            ok = false
+          }
+        }
         self.q.async {
           guard self.jobs[j.spec.id] === j, j.stopping == nil else { try? FileManager.default.removeItem(at: tmp); return }
           if ok {
@@ -637,7 +672,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
             if j.checksumFailures >= 2 {
               j.checksumFailures = 0
               self.switchMirror(j)
-              if j.mirror >= f.urls.count {
+              if j.mirror >= f.fetchUrls.count {
                 self.fail(j, DownloadError("checksum", "\(f.name): SHA-256 mismatch", ["file": f.name])); return
               }
             }
@@ -686,7 +721,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     q.async {
       guard let j = self.job(for: task) else { return }
       self.emit(j.spec.id, ["status": "waiting", "reason": j.spec.wifiOnly ? "wifi" : "network",
-                            "received": self.received(j), "total": j.spec.totalBytes])
+                            "received": self.received(j), "total": j.spec.downloadBytes])
     }
   }
 
@@ -731,4 +766,26 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
 
   var isBusy: Bool { q.sync { jobs.values.contains { $0.status == "queued" || $0.status == "downloading" } } }
   func usedBytes() -> Int64 { store.usedBytes() }
+}
+
+/// zstd decompression in the native library (QazVoiceNative.framework).
+enum NativeUnpack {
+  private typealias Unzstd = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>, UInt64) -> UnsafeMutablePointer<CChar>?
+  private typealias Free = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
+
+  private static let fns: (Unzstd, Free)? = {
+    let h = dlopen("QazVoiceNative.framework/QazVoiceNative", RTLD_NOW)
+    guard let a = dlsym(h ?? UnsafeMutableRawPointer(bitPattern: -2), "qv_unzstd"),
+          let b = dlsym(h ?? UnsafeMutableRawPointer(bitPattern: -2), "qv_string_free") else { return nil }
+    return (unsafeBitCast(a, to: Unzstd.self), unsafeBitCast(b, to: Free.self))
+  }()
+
+  /// Returns the size and SHA-256 of the unpacked file, or nil on any error.
+  static func unzstd(src: URL, dst: URL, maxOut: Int64) -> (size: Int64, sha256: String)? {
+    guard let (f, free) = fns, let p = f(src.path, dst.path, UInt64(max(0, maxOut))) else { return nil }
+    defer { free(p) }
+    guard let o = try? JSONSerialization.jsonObject(with: Data(String(cString: p).utf8)) as? [String: Any],
+          let n = (o["size"] as? NSNumber)?.int64Value, let h = o["sha256"] as? String else { return nil }
+    return (n, h)
+  }
 }
