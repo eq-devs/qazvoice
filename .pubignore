@@ -1,0 +1,10 @@
+rust/target/
+android/.gradle/
+android/build/
+android/local.properties
+example/build/
+example/.dart_tool/
+example/android/.gradle/
+example/android/app/build/
+.dart_tool/
+build/
