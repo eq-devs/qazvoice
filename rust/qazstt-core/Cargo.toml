@@ -1,0 +1,44 @@
+[package]
+name = "qazstt-core"
+publish = false
+description = "Kazakh offline speech-to-text core: NeMo features + FastConformer CTC (ONNX Runtime) + VAD + Kazakh text normalization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "qazstt_core"
+crate-type = ["rlib"]
+
+[features]
+# `onnx` (default): ONNX Runtime via `ort`, prebuilt binaries downloaded and
+# linked at build time — desktop & server (macOS, Linux, Windows).
+# `onnx-dynamic`: same backend, but libonnxruntime is dlopen()ed at runtime —
+# Android (ship com.microsoft.onnxruntime:onnxruntime-android ≥ 1.17 in the APK; we use 1.22)
+# or any system-provided onnxruntime (set ORT_DYLIB_PATH).
+# Without either, only the dependency-free parts are built (audio, features,
+# VAD, CTC decoding, Kazakh text) — unit-tested, wasm32-compatible.
+default = ["onnx"]
+ort-backend = ["dep:ort"]
+onnx = ["ort-backend", "ort/download-binaries", "ort/tls-rustls", "ort/copy-dylibs"]
+onnx-dynamic = ["ort-backend", "ort/load-dynamic"]
+# `onnx-static`: link a prebuilt static ONNX Runtime from $ORT_LIB_LOCATION — iOS,
+# where ort has no downloadable binaries (use the official onnxruntime-c pod archive;
+# see bindings/ios/build.sh).
+onnx-static = ["ort-backend"]
+# Execution providers — pick per target. CPU is always available.
+cuda   = ["onnx", "ort/cuda"]
+coreml = ["ort-backend", "ort/coreml"]  # with onnx (macOS) or onnx-static (iOS)
+directml = ["onnx", "ort/directml"]      # Windows, any DX12 GPU (no CUDA install needed)
+nnapi  = ["onnx-dynamic", "ort/nnapi"]
+
+[dependencies]
+# Pinned: the ort 2.0 release-candidate API moves between rcs. rc.15 downloads
+# onnxruntime 1.31 for `onnx`, and with `onnx-dynamic`/`onnx-static` accepts any
+# runtime with API ≥ 17 (tested against 1.22, the Android AAR / iOS pod we ship,
+# and 1.31). Since rc.11 the binary download needs a TLS backend (tls-rustls).
+ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["std"] }
+
+[[example]]
+name = "punct"
+required-features = ["ort-backend"]

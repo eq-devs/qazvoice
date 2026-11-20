@@ -1,0 +1,27 @@
+[package]
+name = "qazvoice-ffi"
+description = "C ABI of the qazvoice Flutter plugin (Kazakh on-device TTS / STT)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "qazvoice"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["onnx"]
+# Host builds and tests: ort downloads ONNX Runtime at build time.
+onnx = ["qazstt-core/onnx"]
+# Android: libonnxruntime.so comes from the onnxruntime-android AAR and is dlopen()ed.
+onnx-dynamic = ["qazstt-core/onnx-dynamic"]
+# iOS: static ONNX Runtime from $ORT_LIB_LOCATION.
+onnx-static = ["qazstt-core/onnx-static"]
+
+[dependencies]
+qazstt-core = { path = "../qazstt-core", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

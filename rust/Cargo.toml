@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["qazstt-core", "qazvoice-ffi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["eq-devs"]
+repository = "https://github.com/eq-devs/qazvoice"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+strip = true
