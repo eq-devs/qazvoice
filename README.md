@@ -36,7 +36,8 @@ To use the microphone (`QazStt.listen`), add this to `android/app/src/main/Andro
 The plugin already declares the permissions its downloader needs (`INTERNET`,
 `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`).
 
-On iOS, add a microphone usage text to `ios/Runner/Info.plist` (needed for `listen`):
+On iOS the minimum deployment target is **15.1** (set `platform :ios, '15.1'` in
+`ios/Podfile` if you use CocoaPods). Add a microphone usage text to `ios/Runner/Info.plist` (needed for `listen`):
 
 ```xml
 <key>NSMicrophoneUsageDescription</key>

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds ios/qazvoice/Frameworks/QazVoiceNative.xcframework: a dynamic framework
 # (libqazvoice + ONNX Runtime linked in statically from the official
-# onnxruntime-c pod archive) for iOS devices and the simulator (arm64).
+# onnxruntime-c pod archive) for iOS devices (arm64) and the simulator (arm64, x86_64).
 # A dynamic framework keeps its exported symbols, so dart:ffi finds them in any
 # app build configuration. Plugin users do NOT need this script.
 set -euo pipefail
@@ -9,12 +9,14 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ORT_VER=1.22.0
 MIN_IOS=15.1
 O=$ROOT/rust/target/ios-ort
-if [ ! -s "$O/dev/libonnxruntime.a" ]; then
+if [ ! -s "$O/simx/libonnxruntime.a" ]; then
   mkdir -p "$O/sim" "$O/dev"
   curl -fsSL -o "$O/ort.zip" "https://download.onnxruntime.ai/pod-archive-onnxruntime-c-$ORT_VER.zip"
   unzip -q -o "$O/ort.zip" -d "$O/x"
   X=$O/x/onnxruntime.xcframework
   lipo -thin arm64 "$X/ios-arm64_x86_64-simulator/onnxruntime.framework/onnxruntime" -output "$O/sim/libonnxruntime.a"
+  mkdir -p "$O/simx"
+  lipo -thin x86_64 "$X/ios-arm64_x86_64-simulator/onnxruntime.framework/onnxruntime" -output "$O/simx/libonnxruntime.a"
   lipo -thin arm64 "$X/ios-arm64/onnxruntime.framework/onnxruntime" -output "$O/dev/libonnxruntime.a"
 fi
 RT=$(clang -print-resource-dir)/lib/darwin
@@ -23,13 +25,21 @@ export CARGO_TARGET_DIR=$ROOT/rust/target/ios
 export IPHONEOS_DEPLOYMENT_TARGET=$MIN_IOS
 STAGE=$ROOT/rust/target/ios-frameworks
 rm -rf "$STAGE"; mkdir -p "$STAGE"
-for spec in aarch64-apple-ios:dev:ios:iphoneos aarch64-apple-ios-sim:sim:iossim:iphonesimulator; do
+for spec in aarch64-apple-ios:dev:ios:iphoneos aarch64-apple-ios-sim:sim:iossim:iphonesimulator x86_64-apple-ios:simx:iossim:iphonesimulator-x86_64; do
   IFS=: read -r target ort rt platform <<<"$spec"
   # compiler-rt provides __isPlatformVersionAtLeast for ONNX Runtime's CoreML code.
   ORT_LIB_LOCATION=$O/$ort ORT_PREFER_DYNAMIC_LINK=0 cargo rustc --release -p qazvoice-ffi --lib \
     --crate-type cdylib --target "$target" --no-default-features --features onnx-static -- \
     -C link-arg="$RT/libclang_rt.$rt.a" -C link-arg=-Wl,-install_name,@rpath/QazVoiceNative.framework/QazVoiceNative \
     -C link-arg=-framework -C link-arg=Foundation -C link-arg=-framework -C link-arg=CoreML -C link-arg=-lc++
+  if [ "$platform" = iphonesimulator-x86_64 ]; then
+    # Merge into the simulator framework as a second architecture.
+    lipo -create "$STAGE/iphonesimulator/QazVoiceNative.framework/QazVoiceNative" \
+      "$CARGO_TARGET_DIR/$target/release/libqazvoice.dylib" -output "$STAGE/fat"
+    strip -x "$STAGE/fat" 2>/dev/null || true
+    mv "$STAGE/fat" "$STAGE/iphonesimulator/QazVoiceNative.framework/QazVoiceNative"
+    continue
+  fi
   FW=$STAGE/$platform/QazVoiceNative.framework
   mkdir -p "$FW"
   cp "$CARGO_TARGET_DIR/$target/release/libqazvoice.dylib" "$FW/QazVoiceNative"
