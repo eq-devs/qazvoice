@@ -22,7 +22,9 @@ class QazVoiceDemo extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: seed, useMaterial3: true),
       darkTheme: ThemeData(
-          colorSchemeSeed: seed, brightness: Brightness.dark, useMaterial3: true),
+          colorSchemeSeed: seed,
+          brightness: Brightness.dark,
+          useMaterial3: true),
       home: const Home(),
     );
   }
@@ -90,7 +92,9 @@ class _HomeState extends State<Home> {
               selectedIcon: Icon(Icons.record_voice_over),
               label: 'Дауыстау'),
           NavigationDestination(
-              icon: Icon(Icons.mic_none), selectedIcon: Icon(Icons.mic), label: 'Тану'),
+              icon: Icon(Icons.mic_none),
+              selectedIcon: Icon(Icons.mic),
+              label: 'Тану'),
           NavigationDestination(
               icon: Icon(Icons.text_fields_outlined),
               selectedIcon: Icon(Icons.text_fields),

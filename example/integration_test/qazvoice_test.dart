@@ -47,7 +47,8 @@ void main() {
   });
 
   testWidgets('catalog and device', (tester) async {
-    expect(QazVoice.models.map((m) => m.id), containsAll(['tts-kk', 'stt-kk', 'punct-kk']));
+    expect(QazVoice.models.map((m) => m.id),
+        containsAll(['tts-kk', 'stt-kk', 'punct-kk']));
     final d = await QazVoice.checkDevice('tts-kk');
     expect(d.supportedAbi, isTrue, reason: '${d.abis}');
     expect(d.nativeLibrary, isTrue);
@@ -97,7 +98,8 @@ void main() {
     expect(m.isInstalled, isTrue);
   });
 
-  testWidgets('TTS: load and synthesize off the UI isolate; speak; save m4a', (tester) async {
+  testWidgets('TTS: load and synthesize off the UI isolate; speak; save m4a',
+      (tester) async {
     final tts = await QazTts.open();
     expect(tts.speakers, hasLength(6));
     expect(tts.sampleRate, 22050);
@@ -108,7 +110,8 @@ void main() {
       chunks = await tts.synthesize(text, speaker: 3).toList();
     });
     expect(chunks, hasLength(3));
-    expect(text.substring(chunks[2].start, chunks[2].end), '2024 жылы 15 мамырда.');
+    expect(text.substring(chunks[2].start, chunks[2].end),
+        '2024 жылы 15 мамырда.');
     expect(chunks.every((c) => c.pcm.length > 2000), isTrue);
     // ignore: avoid_print
     print('tts: max UI-isolate stall ${stall.inMilliseconds} ms');
@@ -136,23 +139,27 @@ void main() {
     expect(s.elapsed, lessThan(const Duration(seconds: 1)));
 
     final dir = await getTemporaryDirectory();
-    final m4a = await tts.saveAudio('${dir.path}/it.m4a', 'Алматы қаласында жиырма бес мың адам тұрады.',
+    final m4a = await tts.saveAudio(
+        '${dir.path}/it.m4a', 'Алматы қаласында жиырма бес мың адам тұрады.',
         format: QazAudioFormat.m4a, speaker: 3);
     expect(await m4a.length(), greaterThan(5000));
-    final wav = await tts.saveAudio('${dir.path}/it.wav', 'Алматы қаласында жиырма бес мың адам тұрады.',
+    final wav = await tts.saveAudio(
+        '${dir.path}/it.wav', 'Алматы қаласында жиырма бес мың адам тұрады.',
         speaker: 3);
     expect(await wav.length(), greaterThan(50000));
     await tts.close();
   });
 
-  testWidgets('STT: wav and m4a (platform decoder), progress, cancel', (tester) async {
+  testWidgets('STT: wav and m4a (platform decoder), progress, cancel',
+      (tester) async {
     final dir = await getTemporaryDirectory();
     final stt = await QazStt.open(numbersToDigits: true);
     late List<SttResult> r;
     final progress = <double>[];
     final stall = await maxStall(() async {
       await stt.preload();
-      r = await stt.transcribeFile('${dir.path}/it.wav', onProgress: progress.add);
+      r = await stt.transcribeFile('${dir.path}/it.wav',
+          onProgress: progress.add);
     });
     final text = r.map((x) => x.text).join(' ');
     // ignore: avoid_print
@@ -162,7 +169,8 @@ void main() {
     expect(progress.last, 1.0);
     expect(stall, lessThan(const Duration(milliseconds: 100)));
 
-    final m4a = await stt.transcribeFile('${dir.path}/it.m4a', onProgress: progress.add);
+    final m4a = await stt.transcribeFile('${dir.path}/it.m4a',
+        onProgress: progress.add);
     final t2 = m4a.map((x) => x.text).join(' ');
     // ignore: avoid_print
     print('stt m4a: "$t2"');
@@ -180,9 +188,11 @@ void main() {
     final interim = <String>[];
     s.results.where((x) => !x.isFinal).listen((x) => interim.add(x.text));
     for (var i = 0; i < pcm.length; i += 2205) {
-      await s.addPcm16(pcm.sublist(i, i + 2205 > pcm.length ? pcm.length : i + 2205),
+      await s.addPcm16(
+          pcm.sublist(i, i + 2205 > pcm.length ? pcm.length : i + 2205),
           sampleRate: 22050);
-      await Future<void>.delayed(const Duration(milliseconds: 100)); // real time
+      await Future<void>.delayed(
+          const Duration(milliseconds: 100)); // real time
     }
     final live = await s.finish();
     expect(live.map((x) => x.text).join(' ').toLowerCase(), contains('алматы'));
@@ -190,7 +200,8 @@ void main() {
     await stt.close();
   });
 
-  testWidgets('frames stay smooth while a model loads and synthesizes', (tester) async {
+  testWidgets('frames stay smooth while a model loads and synthesizes',
+      (tester) async {
     binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
     final timings = <FrameTiming>[];
     void onTimings(List<FrameTiming> t) => timings.addAll(t);
@@ -200,7 +211,8 @@ void main() {
     final tts = await QazTts.open();
     final work = () async {
       await tts.preload();
-      await tts.synthesizeAll('Бұл кадрларды тексеруге арналған ұзынырақ сөйлем. Тағы бір сөйлем.');
+      await tts.synthesizeAll(
+          'Бұл кадрларды тексеруге арналған ұзынырақ сөйлем. Тағы бір сөйлем.');
     }();
     while (!tts.isLoaded) {
       await tester.pump(const Duration(milliseconds: 16));
@@ -210,13 +222,16 @@ void main() {
     SchedulerBinding.instance.removeTimingsCallback(onTimings);
     binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fadePointers;
     // The first frames build the widget tree from scratch (JIT in debug): skip them.
-    final build = timings.skip(3).map((t) => t.buildDuration.inMicroseconds).toList();
+    final build =
+        timings.skip(3).map((t) => t.buildDuration.inMicroseconds).toList();
     // ignore: avoid_print
-    print('frames: ${timings.length}, first ${timings.take(3).map((t) => t.buildDuration.inMilliseconds).toList()} ms, '
+    print(
+        'frames: ${timings.length}, first ${timings.take(3).map((t) => t.buildDuration.inMilliseconds).toList()} ms, '
         'slowest after: ${(List.of(build)..sort()).reversed.take(3).map((u) => u ~/ 1000).toList()} ms');
     build.sort();
     final worst = build.isEmpty ? 0 : build.last;
-    expect(worst, lessThan(16000 * 3), reason: 'UI thread blocked during model work');
+    expect(worst, lessThan(16000 * 3),
+        reason: 'UI thread blocked during model work');
     await tts.close();
   });
 

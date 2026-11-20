@@ -130,16 +130,16 @@ class QazvoicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityA
                 mapOf("modelsDir" to DownloadManager.store.root.path, "states" to DownloadManager.states())
             }
             "device" -> bg(result) { device() }
-            "modelState" -> bg(result) { DownloadManager.state(call.argument<String>("id")!!) }
+            "modelState" -> bg(result) { DownloadManager.state(JobSpec.checkId(call.argument<String>("id"))) }
             "download" -> bg(result) {
                 val spec = JobSpec.fromMap(call.arguments as Map<*, *>)
                 DownloadManager.enqueue(spec)
                 null
             }
-            "pause" -> bg(result) { DownloadManager.pause(call.argument<String>("id")!!); null }
-            "resume" -> bg(result) { DownloadManager.resume(call.argument<String>("id")!!); null }
-            "cancel" -> bg(result) { DownloadManager.cancel(call.argument<String>("id")!!); null }
-            "delete" -> bg(result) { DownloadManager.delete(call.argument<String>("id")!!); null }
+            "pause" -> bg(result) { DownloadManager.pause(JobSpec.checkId(call.argument<String>("id"))); null }
+            "resume" -> bg(result) { DownloadManager.resume(JobSpec.checkId(call.argument<String>("id"))); null }
+            "cancel" -> bg(result) { DownloadManager.cancel(JobSpec.checkId(call.argument<String>("id"))); null }
+            "delete" -> bg(result) { DownloadManager.delete(JobSpec.checkId(call.argument<String>("id"))); null }
             "storageUsed" -> bg(result) { DownloadManager.usedBytes() }
             "tempDir" -> result.success(ctx.cacheDir.path)
             "requestNotificationPermission" -> {
@@ -214,7 +214,7 @@ class QazvoicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityA
     private fun device(): Map<String, Any?> {
         val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val mi = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
-        val dir = File(ctx.filesDir, "qazvoice").apply { mkdirs() }
+        val dir = File(ctx.noBackupFilesDir, "qazvoice").apply { mkdirs() }
         return mapOf(
             "abis" to Build.SUPPORTED_ABIS.toList(),
             "totalRam" to mi.totalMem,
@@ -273,7 +273,12 @@ class QazvoicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityA
         binding.addRequestPermissionsResultListener(this)
     }
 
-    override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
+    // Rotation during a permission dialog: keep the pending requests, the
+    // result arrives at the re-created activity.
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity?.removeRequestPermissionsResultListener(this)
+        activity = null
+    }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) = onAttachedToActivity(binding)
 

@@ -113,8 +113,13 @@ class NativeWorker {
   /// Frees the native engine and stops the isolate.
   Future<void> dispose() async {
     if (_dead) return;
+    // Cancel whatever runs or waits, so the dispose request (which frees the
+    // native engine) is served promptly instead of after a long job.
+    for (final id in _pending.keys) {
+      _send.send([id, '__cancel', id]);
+    }
     try {
-      await call('__dispose').timeout(const Duration(seconds: 10));
+      await call('__dispose').timeout(const Duration(seconds: 30));
     } catch (_) {}
     _fail('disposed');
     _iso.kill(priority: Isolate.immediate);
@@ -129,11 +134,12 @@ class _Pending {
 
 /// Context handed to a request handler inside the worker.
 class _Ctx {
-  _Ctx(this.id, this._out, this._cancelled);
+  _Ctx(this.id, this._out, this._cancelled, this._disposing);
   final int id;
   final SendPort _out;
   final Set<int> _cancelled;
-  bool get cancelled => _cancelled.contains(id);
+  final bool Function() _disposing;
+  bool get cancelled => _cancelled.contains(id) || _disposing();
   void progress(Object? v) => _out.send([id, 2, v]);
   void checkCancelled() {
     if (cancelled) throw const QazCancelled();
@@ -151,6 +157,7 @@ void _workerMain(List<Object?> init) {
     _ => throw ArgumentError(kind),
   };
   final cancelled = <int>{};
+  var disposing = false;
   var chain = Future<void>.value();
   final port = RawReceivePort();
   port.handler = (Object? msg) {
@@ -161,8 +168,12 @@ void _workerMain(List<Object?> init) {
       cancelled.add(m[2] as int);
       return;
     }
+    if (op == '__dispose') {
+      // Everything queued before the dispose is cancelled.
+      disposing = true;
+    }
     chain = chain.then((_) async {
-      final ctx = _Ctx(id, out, cancelled);
+      final ctx = _Ctx(id, out, cancelled, () => disposing);
       try {
         if (op == '__dispose') {
           handler.dispose();
@@ -314,9 +325,9 @@ class _SttHandler extends _Handler {
     final channels = a['channels'] as int;
     final offset = a['offset'] as int;
     final length = a['length'] as int?;
+    final engine = _engine;
     final raf = File(path).openSync();
     final finals = <Object?>[];
-    final engine = _engine;
     lib.sttReset(engine);
     try {
       final end = length != null ? offset + length : raf.lengthSync();

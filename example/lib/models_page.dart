@@ -52,7 +52,8 @@ class _ModelsPageState extends State<ModelsPage> {
           ),
         ),
         const SectionTitle('Модельдер'),
-        for (final m in QazVoice.models) ModelCard(model: m, wifiOnly: _wifiOnly),
+        for (final m in QazVoice.models)
+          ModelCard(model: m, wifiOnly: _wifiOnly),
         const SectionTitle('Құрылғы'),
         Card(
           child: ListTile(
@@ -72,7 +73,8 @@ class _ModelsPageState extends State<ModelsPage> {
         Padding(
           padding: const EdgeInsets.all(8),
           child: Text('qazvoice ${QazVoice.version}',
-              textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall),
         ),
       ],
     );
@@ -94,8 +96,12 @@ class ModelCard extends StatelessWidget {
           title: const Text('Құрылғыны тексеру'),
           content: Text(check.problems.join('\n')),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Бас тарту')),
-            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Бәрібір жүктеу')),
+            TextButton(
+                onPressed: () => Navigator.pop(c, false),
+                child: const Text('Бас тарту')),
+            FilledButton(
+                onPressed: () => Navigator.pop(c, true),
+                child: const Text('Бәрібір жүктеу')),
           ],
         ),
       );
@@ -104,8 +110,8 @@ class ModelCard extends StatelessWidget {
     try {
       await model.download(wifiOnly: wifiOnly);
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('«${model.name('kk')}» дайын')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('«${model.name('kk')}» дайын')));
       }
     } on QazCancelled {
       // cancelled by the user
@@ -126,10 +132,14 @@ class ModelCard extends StatelessWidget {
           'Жедел жад: ${formatBytes(c.totalRamBytes)} (бос ${formatBytes(c.availableRamBytes)})',
           'Бос орын: ${formatBytes(c.freeBytes)}',
           'Жүктеу керек: ${formatBytes(c.requiredBytes)}',
-          if (c.requiredRamBytes > 0) 'Модельге жад: ~${formatBytes(c.requiredRamBytes)}',
+          if (c.requiredRamBytes > 0)
+            'Модельге жад: ~${formatBytes(c.requiredRamBytes)}',
           ...c.problems,
         ].join('\n')),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Жабу'))],
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Жабу'))
+        ],
       ),
     );
   }
@@ -155,11 +165,15 @@ class ModelCard extends StatelessWidget {
                   }),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(model.name('kk'), style: theme.textTheme.titleMedium),
-                      Text('${model.id} · v${model.version} · ${formatBytes(model.downloadSize)}',
-                          style: theme.textTheme.bodySmall),
-                    ]),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(model.name('kk'),
+                              style: theme.textTheme.titleMedium),
+                          Text(
+                              '${model.id} · v${model.version} · ${formatBytes(model.downloadSize)}',
+                              style: theme.textTheme.bodySmall),
+                        ]),
                   ),
                   IconButton(
                     tooltip: 'Құрылғыны тексеру',
@@ -188,7 +202,8 @@ class ModelCard extends StatelessWidget {
             Text(text),
           ],
         );
-    String eta(DownloadProgress p) => p.eta == null ? '' : ' · ${formatDuration(p.eta!)} қалды';
+    String eta(DownloadProgress p) =>
+        p.eta == null ? '' : ' · ${formatDuration(p.eta!)} қалды';
     return switch (s) {
       NotInstalled(:final partialBytes) => Text(partialBytes > 0
           ? 'Жүктелмеген (${formatBytes(partialBytes)} сақталған)'
@@ -206,7 +221,8 @@ class ModelCard extends StatelessWidget {
           }),
       Paused(:final progress) => bar(progress,
           'Кідіртілді · ${formatBytes(progress.received)} / ${formatBytes(progress.total)}'),
-      Verifying() => const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Verifying() =>
+        const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           LinearProgressIndicator(),
           SizedBox(height: 6),
           Text('Тексерілуде…'),
@@ -227,7 +243,9 @@ class ModelCard extends StatelessWidget {
         icon: const Icon(Icons.download),
         label: const Text('Жүктеу'));
     final cancel = OutlinedButton.icon(
-        onPressed: model.cancel, icon: const Icon(Icons.close), label: const Text('Бас тарту'));
+        onPressed: model.cancel,
+        icon: const Icon(Icons.close),
+        label: const Text('Бас тарту'));
     return switch (s) {
       NotInstalled() => [download],
       Failed() => [
@@ -239,7 +257,9 @@ class ModelCard extends StatelessWidget {
         ],
       Downloading() || Waiting() => [
           FilledButton.tonalIcon(
-              onPressed: model.pause, icon: const Icon(Icons.pause), label: const Text('Кідірту')),
+              onPressed: model.pause,
+              icon: const Icon(Icons.pause),
+              label: const Text('Кідірту')),
           cancel,
         ],
       Paused() => [
@@ -262,10 +282,15 @@ class ModelCard extends StatelessWidget {
                 context: context,
                 builder: (c) => AlertDialog(
                   title: const Text('Модельді өшіру керек пе?'),
-                  content: Text('${formatBytes(model.installedSize)} босатылады.'),
+                  content:
+                      Text('${formatBytes(model.installedSize)} босатылады.'),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Жоқ')),
-                    FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Өшіру')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(c, false),
+                        child: const Text('Жоқ')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(c, true),
+                        child: const Text('Өшіру')),
                   ],
                 ),
               );

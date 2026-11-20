@@ -48,7 +48,11 @@ object DownloadManager {
     fun init(context: Context) {
         if (initialized) return
         ctx = context.applicationContext
-        store = ModelStore(File(ctx.filesDir, "qazvoice/models")).also { it.root.mkdirs(); it.recover() }
+        // noBackupFilesDir: hundreds of MB of models must not go into Auto Backup
+        // (they would exceed its quota), nor the mirror headers in job.json.
+        val root = File(ctx.noBackupFilesDir, "qazvoice/models")
+        migrateFromFilesDir(File(ctx.filesDir, "qazvoice/models"), root)
+        store = ModelStore(root).also { it.root.mkdirs(); it.recover() }
         notifier = Notifier(ctx)
         gate.init(ctx)
         downloader = Downloader(gate, { f -> freeBytes(f) })
@@ -65,6 +69,12 @@ object DownloadManager {
             ensureService()
             pump()
         }
+    }
+
+    private fun migrateFromFilesDir(old: File, new: File) {
+        if (!old.exists() || new.exists()) return
+        new.parentFile?.mkdirs()
+        if (!old.renameTo(new)) old.deleteRecursively()
     }
 
     fun addListener(l: (Map<String, Any?>) -> Unit) = synchronized(listeners) { listeners += l }
@@ -136,11 +146,17 @@ object DownloadManager {
     }
 
     fun pause(id: String) {
-        val job = synchronized(lock) { jobs[id] } ?: return
-        if (job.status == "downloading") {
-            job.control.requestStop(cancel = false)
-        } else if (job.status == "queued") {
-            job.status = "paused"
+        val job: Job
+        val wasQueued: Boolean
+        synchronized(lock) {
+            job = jobs[id] ?: return
+            wasQueued = job.status == "queued"
+            when (job.status) {
+                "downloading" -> job.control.requestStop(cancel = false)
+                "queued" -> job.status = "paused" // the pump only takes "queued" jobs
+            }
+        }
+        if (wasQueued) {
             store.saveJob(job.spec, "paused")
             emit(id, state(id))
             notifier.paused(job.spec, received(job))
@@ -169,7 +185,7 @@ object DownloadManager {
     }
 
     private fun finishCancel(job: Job) {
-        synchronized(lock) { jobs.remove(job.spec.id) }
+        synchronized(lock) { if (jobs[job.spec.id] === job) jobs.remove(job.spec.id) }
         store.clearStaging(job.spec.id)
         notifier.clear(job.spec.id)
         val installed = store.installed(job.spec.id)
@@ -244,8 +260,12 @@ object DownloadManager {
         try {
             gate.current = job.control
             downloader.run(spec, staging, listener, job.control)
-            store.install(spec)
-            synchronized(lock) { jobs.remove(spec.id) }
+            // A delete/cancel that landed after the last check must win.
+            synchronized(lock) {
+                if (jobs[spec.id] !== job || job.control.stop) throw StoppedException(cancel = job.control.cancel || jobs[spec.id] !== job)
+                store.install(spec)
+                jobs.remove(spec.id)
+            }
             val bytes = store.installed(spec.id)?.bytes ?: spec.totalBytes
             log("${spec.id}: installed v${spec.version}")
             emit(spec.id, mapOf("status" to "installed", "version" to spec.version, "installedBytes" to bytes))

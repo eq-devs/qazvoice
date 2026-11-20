@@ -108,7 +108,8 @@ class QazTts extends ModelEngine {
     if (!internals.isMock || await json.exists()) {
       try {
         final cfg = jsonDecode(await json.readAsString()) as Map;
-        rate = ((cfg['audio'] as Map?)?['sample_rate'] as num?)?.toInt() ?? rate;
+        rate =
+            ((cfg['audio'] as Map?)?['sample_rate'] as num?)?.toInt() ?? rate;
         final map = (cfg['speaker_id_map'] as Map?) ?? const {};
         final byId = map.entries.toList()
           ..sort((a, b) => (a.value as num).compareTo(b.value as num));
@@ -116,7 +117,8 @@ class QazTts extends ModelEngine {
       } on FileSystemException {
         throw const QazModelNotInstalled(modelId);
       } on FormatException {
-        throw const QazEngineError('voice.onnx.json is not valid JSON', kind: 'model');
+        throw const QazEngineError('voice.onnx.json is not valid JSON',
+            kind: 'model');
       }
     } else {
       speakers = const ['F1', 'F2', 'F3', 'M1', 'M2', 'M3'];
@@ -288,14 +290,19 @@ class QazTts extends ModelEngine {
       Duration sentencePause = const Duration(milliseconds: 250)}) async {
     checkOpen();
     _checkArgs(speaker, speed);
-    await stop();
+    // Claim the slot synchronously, so concurrent speak() calls each stop the
+    // one before them and only the newest keeps playing.
+    final previous = _speech;
     final s = _speech = _Speech();
-    final p = QazVoice.internals.platform;
     _speaking.value = true;
+    if (previous != null) await _stopSpeech(previous);
+    final p = QazVoice.internals.platform;
+    var finished = false;
     final chunks = <(int, TtsChunk)>[];
     StreamSubscription<Map<String, Object?>>? sub;
     StreamSubscription<TtsChunk>? synth;
     try {
+      if (s.stopped) return;
       s.player = await p.playerCreate(sampleRate);
       if (s.stopped) return;
       sub = QazVoice.internals.events
@@ -333,12 +340,18 @@ class QazTts extends ModelEngine {
       s.synth = synth;
       await Future.any([done.future, s.stoppedFuture]);
       if (!s.stopped) {
-        await Future.any([p.playerFinish(s.player!), s.stoppedFuture]);
+        await Future.any([
+          p.playerFinish(s.player!).then((_) => finished = true),
+          s.stoppedFuture
+        ]);
       }
     } finally {
       await synth?.cancel();
       await sub?.cancel();
-      if (s.player != null && s.stopped) await p.playerStop(s.player!);
+      // Stopped, failed or still playing: release the AudioTrack and audio focus.
+      if (s.player != null && !finished) {
+        await p.playerStop(s.player!).catchError((Object _) {});
+      }
       if (identical(_speech, s)) {
         _speech = null;
         _speaking.value = false;
@@ -352,7 +365,10 @@ class QazTts extends ModelEngine {
   /// Stops [speak] at once.
   Future<void> stop() async {
     final s = _speech;
-    if (s == null) return;
+    if (s != null) await _stopSpeech(s);
+  }
+
+  Future<void> _stopSpeech(_Speech s) async {
     s.stop();
     await s.synth?.cancel();
     if (s.player != null) {

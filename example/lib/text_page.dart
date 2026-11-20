@@ -13,7 +13,8 @@ class TextPage extends StatefulWidget {
 
 class _TextPageState extends State<TextPage> {
   final _input = TextEditingController(
-      text: 'бүгін алматыда жиырма бес градус жылы болады ертең жаңбыр жауады 2025 жылы т.б.');
+      text:
+          'бүгін алматыда жиырма бес градус жылы болады ертең жаңбыр жауады 2025 жылы т.б.');
   String _output = '';
   String _label = '';
   bool _busy = false;
@@ -63,7 +64,8 @@ class _TextPageState extends State<TextPage> {
           controller: _input,
           minLines: 3,
           maxLines: 8,
-          decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Мәтін'),
+          decoration: const InputDecoration(
+              border: OutlineInputBorder(), labelText: 'Мәтін'),
         ),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [
@@ -86,28 +88,42 @@ class _TextPageState extends State<TextPage> {
           ActionChip(
               avatar: const Icon(Icons.segment, size: 18),
               label: const Text('Сөйлемдерге бөлу'),
-              onPressed: () => _run('Сөйлемдер',
-                  (t) => QazText.split(t).map((s) => '• ${s.text}  [${s.start}–${s.end}]').join('\n'))),
+              onPressed: () => _run(
+                  'Сөйлемдер',
+                  (t) => QazText.split(t)
+                      .map((s) => '• ${s.text}  [${s.start}–${s.end}]')
+                      .join('\n'))),
           ListenableBuilder(
             listenable: QazVoice.model('punct-kk').state,
             builder: (context, _) => ActionChip(
               avatar: const Icon(Icons.format_quote, size: 18),
               label: const Text('Тыныс белгілері'),
-              onPressed: _busy || !QazVoice.model('punct-kk').isInstalled ? null : _punctuate,
+              onPressed: _busy || !QazVoice.model('punct-kk').isInstalled
+                  ? null
+                  : _punctuate,
             ),
           ),
         ]),
-        if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
+        if (_busy)
+          const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: LinearProgressIndicator()),
         const SizedBox(height: 16),
         if (_output.isNotEmpty)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(_label, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary)),
-                const SizedBox(height: 8),
-                SelectableText(_output, key: const Key('textOutput'), style: theme.textTheme.bodyLarge),
-              ]),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_label,
+                        style: theme.textTheme.titleSmall
+                            ?.copyWith(color: theme.colorScheme.primary)),
+                    const SizedBox(height: 8),
+                    SelectableText(_output,
+                        key: const Key('textOutput'),
+                        style: theme.textTheme.bodyLarge),
+                  ]),
             ),
           ),
       ],

@@ -55,8 +55,11 @@ class _SttState extends State<_Stt> {
     super.dispose();
   }
 
-  List<String> get _words =>
-      _hotwords.text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  List<String> get _words => _hotwords.text
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 
   /// Options are fixed per engine; reopen when they change.
   Future<void> _reopen() async {
@@ -67,7 +70,8 @@ class _SttState extends State<_Stt> {
     });
     await old?.close();
     try {
-      final punct = _punctuation && QazVoice.model(QazStt.punctModelId).isInstalled;
+      final punct =
+          _punctuation && QazVoice.model(QazStt.punctModelId).isInstalled;
       final stt = await QazStt.open(
         punctuation: punct,
         numbersToDigits: _numbers,
@@ -109,7 +113,8 @@ class _SttState extends State<_Stt> {
     }, onError: (Object e) {
       if (mounted) showError(context, e);
     }));
-    _subs.add(s.events.listen((e) => setState(() => _speech = e == SttEvent.speechStart)));
+    _subs.add(s.events
+        .listen((e) => setState(() => _speech = e == SttEvent.speechStart)));
   }
 
   Future<void> _listen() async {
@@ -199,7 +204,9 @@ class _SttState extends State<_Stt> {
           child: Column(children: [
             SwitchListTile(
               title: const Text('Тыныс белгілері'),
-              subtitle: Text(punctInstalled ? 'punct-kk моделі' : '«punct-kk» моделін жүктеңіз'),
+              subtitle: Text(punctInstalled
+                  ? 'punct-kk моделі'
+                  : '«punct-kk» моделін жүктеңіз'),
               value: _punctuation && punctInstalled,
               onChanged: punctInstalled
                   ? (v) {
@@ -244,7 +251,8 @@ class _SttState extends State<_Stt> {
                             await stt.setHotwords(_words);
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Сөздер жаңартылды')));
+                                  const SnackBar(
+                                      content: Text('Сөздер жаңартылды')));
                             }
                           },
                   ),
@@ -260,7 +268,8 @@ class _SttState extends State<_Stt> {
           ValueListenableBuilder<bool>(
             valueListenable: listening!,
             builder: (context, on, _) => Column(children: [
-              LevelMeter(level: on ? _session?.level : null, bars: 32, height: 48),
+              LevelMeter(
+                  level: on ? _session?.level : null, bars: 32, height: 48),
               const SizedBox(height: 8),
               Text(on ? (_speech ? 'Сөйлеп жатырсыз…' : 'Тыңдап тұрмын…') : '',
                   style: theme.textTheme.bodySmall),
@@ -298,7 +307,9 @@ class _SttState extends State<_Stt> {
           const SizedBox(height: 12),
           Row(children: [
             Expanded(child: LinearProgressIndicator(value: _fileProgress)),
-            TextButton(onPressed: () => _fileToken?.cancel(), child: const Text('Бас тарту')),
+            TextButton(
+                onPressed: () => _fileToken?.cancel(),
+                child: const Text('Бас тарту')),
           ]),
         ],
         const SizedBox(height: 16),
@@ -313,7 +324,9 @@ class _SttState extends State<_Stt> {
                   for (final r in _finals) TextSpan(text: '${r.text} '),
                   TextSpan(
                       text: _interim,
-                      style: TextStyle(color: theme.colorScheme.onSurfaceVariant, fontStyle: FontStyle.italic)),
+                      style: TextStyle(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontStyle: FontStyle.italic)),
                   if (_finals.isEmpty && _interim.isEmpty)
                     TextSpan(
                         text: 'Мәтін осында шығады',

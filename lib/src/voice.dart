@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
@@ -391,7 +392,8 @@ class QazModel {
   /// Bytes on disk when installed, else 0.
   int get installedSize => _installedBytes;
 
-  bool get isInstalled => _state.value is Installed;
+  /// A usable version is on the device (also while an update downloads).
+  bool get isInstalled => _installedVersion != null;
 
   /// Installed, but the catalog has a newer version.
   bool get updateAvailable =>
@@ -679,7 +681,9 @@ class _QazVoiceImpl implements QazInternals {
   @override
   void log(QazLogLevel level, String message) {
     final r = QazLog(level, message, DateTime.now());
-    if (kDebugMode && level.index >= QazLogLevel.warning.index) debugPrint('$r');
+    if (kDebugMode && level.index >= QazLogLevel.warning.index) {
+      debugPrint('$r');
+    }
     _log.add(r);
   }
 
@@ -736,15 +740,20 @@ class _QazVoiceImpl implements QazInternals {
     final r = await _platform.init({'notification': _notification.toMap()});
     _modelsDir = r['modelsDir'] as String;
     final states = ((r['states'] as Map?) ?? const {}).cast<String, Object?>();
-    var catalog =
-        Catalog.parse(defaultCatalogJson, pluginVersion: qazvoicePluginVersion);
+    // The built-in catalog is authoritative for the versions it lists; a
+    // signed catalog (cached or fetched) can only add newer versions.
+    _applyCatalog(Catalog.parse(defaultCatalogJson,
+        pluginVersion: qazvoicePluginVersion));
     final cached = await _readCachedCatalog();
-    if (cached != null && _newer(cached, catalog)) catalog = cached;
-    _applyCatalog(catalog);
+    if (cached != null) _applyCatalog(cached);
     for (final m in _models.values) {
       m._initFrom((states[m.id] as Map?)?.cast<String, Object?>());
     }
     _ready = true;
+    for (final e in _early) {
+      _onEvent(e);
+    }
+    _early.clear();
     log(QazLogLevel.info,
         'ready: ${_models.length} models in $_modelsDir${_mock ? ' (mock)' : ''}');
     if (fetchCatalog && !_mock) {
@@ -754,14 +763,12 @@ class _QazVoiceImpl implements QazInternals {
     }
   }
 
-  bool _newer(Catalog a, Catalog b) => a.updated.compareTo(b.updated) >= 0;
-
   void _applyCatalog(Catalog c) {
     c.models.forEach((id, spec) {
       final m = _models[id];
       if (m == null) {
         _models[id] = QazModel._(spec, _modelsDir);
-      } else if (spec.version >= m._spec.version) {
+      } else if (spec.version > m._spec.version) {
         m._spec = spec;
         m._catalogTick.value++;
       }
@@ -769,42 +776,79 @@ class _QazVoiceImpl implements QazInternals {
   }
 
   File get _catalogCache => File('$_modelsDir/catalog.json');
+  File get _catalogSigCache => File('$_modelsDir/catalog.json.sig');
+
+  /// Parses [bytes] only if [sig] is a valid signature by the catalog key.
+  Catalog? _verified(Uint8List bytes, String sig) {
+    if (!QvLib.isAvailable || !QvLib.instance.verifyCatalog(bytes, sig)) {
+      return null;
+    }
+    return Catalog.parse(utf8.decode(bytes),
+        pluginVersion: qazvoicePluginVersion);
+  }
 
   Future<Catalog?> _readCachedCatalog() async {
+    if (_mock) return null;
     try {
-      final f = _catalogCache;
-      if (!await f.exists()) return null;
-      return Catalog.parse(await f.readAsString(),
-          pluginVersion: qazvoicePluginVersion);
+      final f = _catalogCache, g = _catalogSigCache;
+      if (!await f.exists() || !await g.exists()) return null;
+      return _verified(await f.readAsBytes(), await g.readAsString());
     } catch (_) {
       return null;
     }
   }
 
+  static const _maxCatalogBytes = 1 << 20;
+
+  Future<Uint8List> _get(HttpClient client, Uri url) async {
+    final req = await client.getUrl(url);
+    final res = await req.close().timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      await res.drain<void>().catchError((_) {});
+      throw HttpException('HTTP ${res.statusCode}', uri: url);
+    }
+    if (res.contentLength > _maxCatalogBytes) {
+      throw const FormatException('catalog too large');
+    }
+    final out = BytesBuilder(copy: false);
+    await for (final chunk in res.timeout(const Duration(seconds: 15))) {
+      out.add(chunk);
+      if (out.length > _maxCatalogBytes) {
+        throw const FormatException('catalog too large');
+      }
+    }
+    return out.takeBytes();
+  }
+
   Future<void> _fetchCatalog(Uri url) async {
+    if (url.scheme != 'https') {
+      log(QazLogLevel.warning, 'catalog URL must be https: $url');
+      return;
+    }
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
     try {
-      final req = await client.getUrl(url);
-      final res = await req.close().timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200) {
-        throw HttpException('HTTP ${res.statusCode}', uri: url);
-      }
-      final body = await res
-          .transform(utf8.decoder)
-          .timeout(const Duration(seconds: 15))
-          .fold(StringBuffer(), (b, s) => b..write(s));
-      if (body.length > 1 << 20) {
-        throw const FormatException('catalog too large');
-      }
-      final c =
-          Catalog.parse(body.toString(), pluginVersion: qazvoicePluginVersion);
-      _applyCatalog(c);
-      await Directory(_modelsDir).create(recursive: true);
-      final tmp = File('${_catalogCache.path}.tmp');
-      await tmp.writeAsString(body.toString(), flush: true);
-      await tmp.rename(_catalogCache.path);
-      log(QazLogLevel.info, 'catalog updated (${c.updated})');
+      await () async {
+        final body = await _get(client, url);
+        final sig = utf8
+            .decode(await _get(client, url.replace(path: '${url.path}.sig')));
+        final c = _verified(body, sig);
+        if (c == null) {
+          throw const FormatException('catalog signature is not valid');
+        }
+        _applyCatalog(c);
+        await Directory(_modelsDir).create(recursive: true);
+        for (final (file, data) in [
+          (_catalogSigCache, utf8.encode(sig)),
+          (_catalogCache, body),
+        ]) {
+          final tmp = File('${file.path}.tmp');
+          await tmp.writeAsBytes(data, flush: true);
+          await tmp.rename(file.path);
+        }
+        log(QazLogLevel.info, 'catalog updated (${c.updated})');
+      }()
+          .timeout(const Duration(seconds: 60));
     } catch (e) {
       log(QazLogLevel.warning, 'catalog not fetched, using built-in: $e');
     } finally {
@@ -812,13 +856,27 @@ class _QazVoiceImpl implements QazInternals {
     }
   }
 
+  final List<Map<String, Object?>> _early = [];
+
   void _onEvent(Map<String, Object?> e) {
+    if (!_ready && e['type'] == 'download') {
+      // Arrived during init (the service kept running): apply after the snapshot.
+      _early.add(e);
+      return;
+    }
     switch (e['type']) {
       case 'download':
         final m = _models[e['id']];
         if (m == null) return;
         final before = m._state.value;
+        final oldVersion = m._installedVersion;
         m._onWire(e);
+        if (e['status'] == 'installed' &&
+            oldVersion != null &&
+            oldVersion != m._installedVersion) {
+          // Updated on disk: engines holding the old version reopen with the new one.
+          unawaited(_closeEnginesOf(m.id));
+        }
         final after = m._state.value;
         if (before.runtimeType != after.runtimeType) {
           log(after is Failed ? QazLogLevel.error : QazLogLevel.info,
@@ -851,7 +909,6 @@ class _QazVoiceImpl implements QazInternals {
         ? [..._mirrors, ...spec.mirrors.map(QazMirror.new)]
         : [...spec.mirrors.map(QazMirror.new), ..._mirrors];
     if (ordered.isEmpty) throw const QazNetworkError('no mirrors configured');
-    if (m.updateAvailable) await _closeEnginesOf(m.id);
     await _platform.download({
       'id': spec.id,
       'version': spec.version,

@@ -43,12 +43,15 @@ class QazMirror {
     return Uri.parse(s);
   }
 
-  /// Whether the template is a usable http(s) URL.
+  /// Whether the template is a usable http(s) URL. Headers (credentials) are
+  /// only allowed over https, or http to the local machine for testing.
   bool get isValid {
     final u = Uri.tryParse(urlTemplate.replaceAll(RegExp(r'\{[a-z]+\}'), 'x'));
-    return u != null &&
-        (u.scheme == 'https' || u.scheme == 'http') &&
-        u.host.isNotEmpty;
+    if (u == null || u.host.isEmpty) return false;
+    if (u.scheme == 'https') return true;
+    if (u.scheme != 'http') return false;
+    const local = {'localhost', '127.0.0.1', '10.0.2.2', '::1'};
+    return headers.isEmpty || local.contains(u.host);
   }
 }
 
@@ -117,6 +120,9 @@ class ModelSpec {
   String name([String lang = 'en']) => names[lang] ?? names['en'] ?? id;
 }
 
+/// Largest file a catalog may declare (4 GiB).
+const maxModelFileBytes = 4 << 30;
+
 final _idRe = RegExp(r'^[a-z0-9][a-z0-9-]{0,40}$');
 final _fileRe = RegExp(r'^[A-Za-z0-9_-][A-Za-z0-9._-]{0,100}$');
 final _shaRe = RegExp(r'^[0-9a-f]{64}$');
@@ -166,6 +172,7 @@ class Catalog {
           !isSafeFileName(name) ||
           size is! int ||
           size < 0 ||
+          size > maxModelFileBytes ||
           sha is! String ||
           !_shaRe.hasMatch(sha)) {
         return null;

@@ -117,6 +117,59 @@ pub unsafe extern "C" fn qv_pcm_free(p: *mut i16, len: usize) {
     }
 }
 
+// ───────────────────────────── catalog signature ─────────────────────────────
+
+/// Public key of the qazvoice-models catalog signing key (Ed25519).
+const CATALOG_KEY: [u8; 32] = hex32("6229c0edb9b0a1da15fc75e012619150faf9be7fba2fbd590f36a76dbe4cad3a");
+
+const fn hex32(s: &str) -> [u8; 32] {
+    const fn nib(c: u8) -> u8 {
+        match c {
+            b'0'..=b'9' => c - b'0',
+            b'a'..=b'f' => c - b'a' + 10,
+            _ => panic!("bad hex"),
+        }
+    }
+    let b = s.as_bytes();
+    let mut out = [0u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        out[i] = nib(b[2 * i]) << 4 | nib(b[2 * i + 1]);
+        i += 1;
+    }
+    out
+}
+
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+}
+
+/// Checks the Ed25519 signature (hex) of the catalog bytes against the key
+/// built into the plugin. 1 = valid, 0 = invalid.
+fn verify_catalog(data: &[u8], sig_hex: &str) -> bool {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let Some(sig) = decode_hex(sig_hex) else { return false };
+    let Ok(sig) = <[u8; 64]>::try_from(sig.as_slice()) else { return false };
+    let Ok(key) = VerifyingKey::from_bytes(&CATALOG_KEY) else { return false };
+    key.verify_strict(data, &Signature::from_bytes(&sig)).is_ok()
+}
+
+/// # Safety
+/// `data` points to `len` bytes; `sig_hex` is a valid string.
+#[no_mangle]
+pub unsafe extern "C" fn qv_verify_catalog(data: *const u8, len: usize, sig_hex: *const c_char) -> i32 {
+    if data.is_null() {
+        return 0;
+    }
+    let Ok(sig) = arg(sig_hex) else { return 0 };
+    let bytes = std::slice::from_raw_parts(data, len);
+    catch_unwind(AssertUnwindSafe(|| verify_catalog(bytes, sig) as i32)).unwrap_or(0)
+}
+
 // ───────────────────────────── text (no model) ─────────────────────────────
 
 macro_rules! text_fn {
@@ -748,6 +801,19 @@ mod tests {
             assert_eq!(a[0]["pause"], true);
             assert!(a[1]["piece"].as_str().unwrap().starts_with("екі мың"));
         }
+    }
+
+    #[test]
+    fn catalog_signature() {
+        // Signed with the private half of CATALOG_KEY (tool/sign_catalog.sh).
+        let data = include_bytes!("../tests/sig_fixture.json");
+        let sig = include_str!("../tests/sig_fixture.json.sig");
+        assert!(verify_catalog(data, sig));
+        let mut bad = data.to_vec();
+        bad[0] ^= 1;
+        assert!(!verify_catalog(&bad, sig));
+        assert!(!verify_catalog(data, "00"));
+        assert!(!verify_catalog(data, "zz"));
     }
 
     #[test]

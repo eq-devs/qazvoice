@@ -267,7 +267,7 @@ class Downloader(
                     if (sinceSpaceCheck >= SPACE_CHECK_EVERY) {
                         sinceSpaceCheck = 0
                         val free = freeBytes(staging)
-                        if (free in 0 until MIN_FREE) {
+                        if (free in 0 until minOf(MIN_FREE + f.size - written, MIN_FREE * 4)) {
                             throw DownloadException("storage", "storage full", mapOf("needed" to (f.size - written + MARGIN), "available" to free))
                         }
                     }
@@ -298,7 +298,8 @@ class Downloader(
      *  headers are not sent to another host. */
     private fun open(u: UrlSpec, from: Long?, validator: String?, control: Control): HttpURLConnection {
         var url = URL(u.url)
-        val origin = url.host.lowercase(Locale.ROOT)
+        fun origin(x: URL) = "${x.protocol.lowercase(Locale.ROOT)}://${x.host.lowercase(Locale.ROOT)}:${if (x.port < 0) x.defaultPort else x.port}"
+        val start = origin(url)
         repeat(MAX_REDIRECTS) {
             control.check()
             val c = url.openConnection() as HttpURLConnection
@@ -307,7 +308,8 @@ class Downloader(
             c.readTimeout = readTimeoutMs
             c.setRequestProperty("User-Agent", "qazvoice-downloader")
             c.setRequestProperty("Accept-Encoding", "identity")
-            if (url.host.lowercase(Locale.ROOT) == origin) {
+            // Mirror headers (credentials) go to the mirror's own origin only.
+            if (origin(url) == start) {
                 for ((k, v) in u.headers) c.setRequestProperty(k, v)
             }
             if (from != null) {

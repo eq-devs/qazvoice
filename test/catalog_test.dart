@@ -19,17 +19,20 @@ void main() {
   });
 
   test('mirror templates resolve and encode', () {
-    final spec = Catalog.parse(defaultCatalogJson, pluginVersion: '0.0.1').models['tts-kk']!;
+    final spec = Catalog.parse(defaultCatalogJson, pluginVersion: '0.0.1')
+        .models['tts-kk']!;
     final m = QazMirror(spec.mirrors.first);
     expect(m.resolve(spec, 'voice.onnx').toString(),
         'https://github.com/eq-devs/qazvoice-models/releases/download/tts-kk-v1/voice.onnx');
     final own = const QazMirror('https://x.example/m/{id}/{version}/{file}');
-    expect(own.resolve(spec, 'a b').toString(), 'https://x.example/m/tts-kk/1/a%20b');
+    expect(own.resolve(spec, 'a b').toString(),
+        'https://x.example/m/tts-kk/1/a%20b');
     expect(const QazMirror('ftp://x/{file}').isValid, isFalse);
     expect(const QazMirror('not a url').isValid, isFalse);
   });
 
-  Map<String, Object?> base() => jsonDecode(defaultCatalogJson) as Map<String, Object?>;
+  Map<String, Object?> base() =>
+      jsonDecode(defaultCatalogJson) as Map<String, Object?>;
 
   test('unsafe or malformed entries are dropped', () {
     final j = base();
@@ -50,13 +53,19 @@ void main() {
     ((j['models'] as Map)['tts-kk'] as Map)['minPlugin'] = '0.1.0';
     final c = Catalog.parse(jsonEncode(j), pluginVersion: '0.0.1');
     expect(c.models.containsKey('tts-kk'), isFalse);
-    expect(Catalog.parse(jsonEncode(j), pluginVersion: '0.1.0').models.containsKey('tts-kk'), isTrue);
+    expect(
+        Catalog.parse(jsonEncode(j), pluginVersion: '0.1.0')
+            .models
+            .containsKey('tts-kk'),
+        isTrue);
   });
 
   test('wrong schema is rejected', () {
-    expect(() => Catalog.parse('{"schema":2,"models":{}}', pluginVersion: '0.0.1'),
+    expect(
+        () => Catalog.parse('{"schema":2,"models":{}}', pluginVersion: '0.0.1'),
         throwsFormatException);
-    expect(() => Catalog.parse('[]', pluginVersion: '0.0.1'), throwsFormatException);
+    expect(() => Catalog.parse('[]', pluginVersion: '0.0.1'),
+        throwsFormatException);
   });
 
   test('version compare', () {
@@ -90,7 +99,8 @@ void main() {
       expect(back.runtimeType, e.runtimeType);
       expect(back.message, e.message);
     }
-    final s = errorFromWire({'kind': 'storage', 'needed': 7, 'message': 'x'}) as QazInsufficientStorage;
+    final s = errorFromWire({'kind': 'storage', 'needed': 7, 'message': 'x'})
+        as QazInsufficientStorage;
     expect(s.neededBytes, 7);
   });
 }

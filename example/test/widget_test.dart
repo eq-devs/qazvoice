@@ -6,13 +6,15 @@ import 'package:qazvoice_example/main.dart';
 /// Lets real async work (mock timers, isolates) run, then rebuilds.
 Future<void> settle(WidgetTester tester, [int ms = 300]) async {
   for (var i = 0; i < ms ~/ 50; i++) {
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await tester.pump(const Duration(milliseconds: 50));
   }
 }
 
 void main() {
-  testWidgets('model manager downloads a model with the mock engine', (tester) async {
+  testWidgets('model manager downloads a model with the mock engine',
+      (tester) async {
     QazVoice.useMock(platform: MockQazPlatform());
     await tester.pumpWidget(const QazVoiceDemo());
     await settle(tester);

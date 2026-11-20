@@ -15,7 +15,9 @@ Future<void> until(bool Function() test,
     {Duration timeout = const Duration(seconds: 5)}) async {
   final end = DateTime.now().add(timeout);
   while (!test()) {
-    if (DateTime.now().isAfter(end)) throw TimeoutException('condition not met');
+    if (DateTime.now().isAfter(end)) {
+      throw TimeoutException('condition not met');
+    }
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
 }
@@ -24,7 +26,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late MockQazPlatform platform;
 
-  Future<void> setUpMock({Map<String, int> installed = const {}, int freeBytes = 8 << 30}) async {
+  Future<void> setUpMock(
+      {Map<String, int> installed = const {}, int freeBytes = 8 << 30}) async {
     platform = MockQazPlatform(installed: installed, freeBytes: freeBytes);
     QazVoice.useMock(platform: platform);
     await QazVoice.init(fetchCatalog: false);
@@ -35,7 +38,8 @@ void main() {
 
     test('init lists catalog models, all not installed', () {
       expect(QazVoice.isMock, isTrue);
-      expect(QazVoice.models.map((m) => m.id), containsAll(['tts-kk', 'stt-kk', 'punct-kk']));
+      expect(QazVoice.models.map((m) => m.id),
+          containsAll(['tts-kk', 'stt-kk', 'punct-kk']));
       final m = QazVoice.model('tts-kk');
       expect(m.state.value, const NotInstalled());
       expect(m.isInstalled, isFalse);
@@ -129,8 +133,10 @@ void main() {
     await setUpMock(freeBytes: 1000);
     final d = await QazVoice.checkDevice('tts-kk');
     expect(d.enoughStorage, isFalse);
-    await expectLater(QazVoice.model('tts-kk').download(),
-        throwsA(isA<QazInsufficientStorage>().having((e) => e.neededBytes, 'needed', greaterThan(1000))));
+    await expectLater(
+        QazVoice.model('tts-kk').download(),
+        throwsA(isA<QazInsufficientStorage>()
+            .having((e) => e.neededBytes, 'needed', greaterThan(1000))));
   });
 
   test('engines refuse to open without their model', () async {
@@ -138,8 +144,10 @@ void main() {
     expect(() => QazTts.open(), throwsA(isA<QazModelNotInstalled>()));
     expect(() => QazStt.open(), throwsA(isA<QazModelNotInstalled>()));
     await QazVoice.model('stt-kk').download();
-    expect(() => QazStt.open(punctuation: true),
-        throwsA(isA<QazModelNotInstalled>().having((e) => e.modelId, 'id', 'punct-kk')));
+    expect(
+        () => QazStt.open(punctuation: true),
+        throwsA(isA<QazModelNotInstalled>()
+            .having((e) => e.modelId, 'id', 'punct-kk')));
     expect(() => QazText.punctuate('x'), throwsA(isA<QazModelNotInstalled>()));
   });
 
@@ -182,7 +190,9 @@ void main() {
       final seen = <String>[];
       tts.current.addListener(() {
         final c = tts.current.value;
-        if (c != null && (seen.isEmpty || seen.last != c.text)) seen.add(c.text);
+        if (c != null && (seen.isEmpty || seen.last != c.text)) {
+          seen.add(c.text);
+        }
       });
       final levels = <double>[];
       final sub = tts.level.listen(levels.add);
@@ -213,12 +223,14 @@ void main() {
       expect(info!.sampleRate, 22050);
       expect(info.channels, 1);
       expect(info.dataLength, greaterThan(0));
-      final m4a = await tts.saveAudio('${dir.path}/a.m4a', 'Сәлем.', format: QazAudioFormat.m4a);
+      final m4a = await tts.saveAudio('${dir.path}/a.m4a', 'Сәлем.',
+          format: QazAudioFormat.m4a);
       expect(await m4a.length(), greaterThan(0));
       await dir.delete(recursive: true);
     });
 
-    test('memory pressure releases an idle model, not a speaking one', () async {
+    test('memory pressure releases an idle model, not a speaking one',
+        () async {
       await tts.preload();
       platform.emitTrimMemory();
       await until(() => !tts.isLoaded, timeout: const Duration(seconds: 2));
@@ -239,8 +251,9 @@ void main() {
     });
     tearDown(() => stt.close());
 
-    Int16List tone(double secs, {bool loud = true}) => Int16List.fromList(List.generate(
-        (16000 * secs).round(), (i) => loud ? (math.sin(i * 0.08) * 9000).round() : 0));
+    Int16List tone(double secs, {bool loud = true}) =>
+        Int16List.fromList(List.generate((16000 * secs).round(),
+            (i) => loud ? (math.sin(i * 0.08) * 9000).round() : 0));
 
     test('session: events, interim and final results', () async {
       final s = stt.session();
@@ -268,14 +281,17 @@ void main() {
 
     test('float input and resampling path', () async {
       final s = stt.session();
-      final f = Float32List.fromList(List.generate(48000, (i) => i > 8000 ? math.sin(i * 0.03) * 0.3 : 0.0));
+      final f = Float32List.fromList(List.generate(
+          48000, (i) => i > 8000 ? math.sin(i * 0.03) * 0.3 : 0.0));
       await s.addFloat32(f, sampleRate: 48000, channels: 1);
       final r = await s.finish();
       expect(r, hasLength(1));
     });
 
-    test('listen records from the microphone and auto-stops after silence', () async {
-      final session = await stt.listen(autoStopAfter: const Duration(milliseconds: 300));
+    test('listen records from the microphone and auto-stops after silence',
+        () async {
+      final session =
+          await stt.listen(autoStopAfter: const Duration(milliseconds: 300));
       expect(stt.isListening, isTrue);
       final finals = <SttResult>[];
       session.results.where((r) => r.isFinal).listen(finals.add);
@@ -291,14 +307,17 @@ void main() {
 
     test('transcribeFile on a wav with progress; cancellable', () async {
       final dir = await Directory.systemTemp.createTemp('qv');
-      final f = File('${dir.path}/a.wav')..writeAsBytesSync(pcm16ToWav(tone(1), 16000));
+      final f = File('${dir.path}/a.wav')
+        ..writeAsBytesSync(pcm16ToWav(tone(1), 16000));
       final progress = <double>[];
       final r = await stt.transcribeFile(f.path, onProgress: progress.add);
       expect(r.single.text, 'Сәлем әлем');
       expect(progress.last, 1.0);
       final token = QazCancelToken()..cancel();
-      await expectLater(stt.transcribeFile(f.path, cancelToken: token), throwsA(isA<QazCancelled>()));
-      await expectLater(stt.transcribeFile('${dir.path}/missing.wav'), throwsA(isA<QazEngineError>()));
+      await expectLater(stt.transcribeFile(f.path, cancelToken: token),
+          throwsA(isA<QazCancelled>()));
+      await expectLater(stt.transcribeFile('${dir.path}/missing.wav'),
+          throwsA(isA<QazEngineError>()));
       await dir.delete(recursive: true);
     });
 

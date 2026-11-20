@@ -79,7 +79,9 @@ class _TtsState extends State<_Tts> {
     if (m == null) return id;
     final gender = m.group(1) == 'F' ? 'Әйел' : 'Ер';
     final name = m.group(3);
-    return name != null ? '$name (${gender.toLowerCase()})' : '$gender ${m.group(2)}';
+    return name != null
+        ? '$name (${gender.toLowerCase()})'
+        : '$gender ${m.group(2)}';
   }
 
   Future<void> _speak() async {
@@ -88,7 +90,9 @@ class _TtsState extends State<_Tts> {
     try {
       final t = Stopwatch()..start();
       await tts.speak(_text.text, speaker: _speaker, speed: _speed);
-      if (mounted) setState(() => _status = 'Оқылды (${formatDuration(t.elapsed)})');
+      if (mounted) {
+        setState(() => _status = 'Оқылды (${formatDuration(t.elapsed)})');
+      }
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -100,15 +104,18 @@ class _TtsState extends State<_Tts> {
     setState(() => _busy = true);
     try {
       final dir = await getApplicationDocumentsDirectory();
-      final path = '${dir.path}/qazvoice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path =
+          '${dir.path}/qazvoice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       final t = Stopwatch()..start();
       final f = await tts.saveAudio(path, _text.text,
           format: QazAudioFormat.m4a, speaker: _speaker, speed: _speed);
       final size = await f.length();
       if (!mounted) return;
-      setState(() => _status = 'Сақталды: ${f.uri.pathSegments.last} · ${formatBytes(size)} · ${t.elapsedMilliseconds} мс');
+      setState(() => _status =
+          'Сақталды: ${f.uri.pathSegments.last} · ${formatBytes(size)} · ${t.elapsedMilliseconds} мс');
       if (share) {
-        await SharePlus.instance.share(ShareParams(files: [XFile(f.path, mimeType: 'audio/mp4')], text: _text.text));
+        await SharePlus.instance.share(ShareParams(
+            files: [XFile(f.path, mimeType: 'audio/mp4')], text: _text.text));
       }
     } catch (e) {
       if (mounted) showError(context, e);
@@ -152,7 +159,8 @@ class _TtsState extends State<_Tts> {
               ),
           ]),
           const SizedBox(height: 16),
-          Text('Жылдамдық: ${_speed.toStringAsFixed(2)}×', style: theme.textTheme.titleSmall),
+          Text('Жылдамдық: ${_speed.toStringAsFixed(2)}×',
+              style: theme.textTheme.titleSmall),
           Slider(
             value: _speed,
             min: 0.5,
@@ -192,7 +200,10 @@ class _TtsState extends State<_Tts> {
               ),
             ]),
           ),
-          if (_busy) const Padding(padding: EdgeInsets.only(top: 12), child: LinearProgressIndicator()),
+          if (_busy)
+            const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: LinearProgressIndicator()),
           if (_status != null)
             Padding(
               padding: const EdgeInsets.only(top: 12),

@@ -15,6 +15,7 @@ abstract class ModelEngine implements QazEngineHolder {
   Timer? _idle;
   bool _closed = false;
   Future<void>? _loading;
+  Future<void>? _unloading;
 
   bool get isClosed => _closed;
 
@@ -50,6 +51,8 @@ abstract class ModelEngine implements QazEngineHolder {
   }
 
   Future<void> _ensureLoaded() async {
+    final u = _unloading;
+    if (u != null) await u;
     if (isLoaded) return;
     final l = _loading ??= () async {
       final t = Stopwatch()..start();
@@ -76,8 +79,20 @@ abstract class ModelEngine implements QazEngineHolder {
 
   @override
   Future<void> releaseIfIdle() async {
-    if (_closed || _busy > 0 || pinned || !isLoaded || _loading != null) return;
-    await doUnload();
+    if (_closed ||
+        _busy > 0 ||
+        pinned ||
+        !isLoaded ||
+        _loading != null ||
+        _unloading != null) {
+      return;
+    }
+    final u = _unloading = doUnload();
+    try {
+      await u;
+    } finally {
+      _unloading = null;
+    }
     QazVoice.internals.log(QazLogLevel.info, '${modelIds.join('+')} released');
   }
 

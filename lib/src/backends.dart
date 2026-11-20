@@ -95,12 +95,20 @@ abstract class _WorkerBackend {
   NativeWorker? _w;
   Future<NativeWorker>? _spawning;
   bool _loaded = false;
+  bool _disposed = false;
   bool get isLoaded => _loaded;
 
   Future<NativeWorker> get worker async {
+    if (_disposed) throw const QazEngineError('engine is closed');
     final w = _w;
     if (w != null) return w;
-    return _w = await (_spawning ??= NativeWorker.spawn(_kind));
+    final spawned = await (_spawning ??= NativeWorker.spawn(_kind));
+    if (_disposed) {
+      // Closed while the isolate was starting.
+      await spawned.dispose();
+      throw const QazEngineError('engine is closed');
+    }
+    return _w = spawned;
   }
 
   Future<Object?> call(String op,
@@ -111,15 +119,24 @@ abstract class _WorkerBackend {
 
   Future<void> unload() async {
     if (_w == null) return;
-    await call('unload');
+    // Mark unloaded first: a request arriving meanwhile reloads (load is a
+    // no-op in the worker while the handle still exists).
     _loaded = false;
+    await call('unload');
   }
 
   Future<void> dispose() async {
-    final w = _w ?? await _spawning;
+    _disposed = true;
+    var w = _w;
+    final spawning = _spawning;
     _w = null;
     _spawning = null;
     _loaded = false;
+    if (w == null && spawning != null) {
+      try {
+        w = await spawning;
+      } catch (_) {}
+    }
     await w?.dispose();
   }
 }

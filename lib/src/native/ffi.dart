@@ -67,7 +67,22 @@ class QvLib {
         punctNew = l.lookupFunction<_NewPathN, QvNewPathFn>('qv_punct_new'),
         punctApply =
             l.lookupFunction<QvPtrStrStrFn, QvPtrStrStrFn>('qv_punct_apply'),
-        punctFree = l.lookupFunction<_VoidPtrN, QvVoidPtrFn>('qv_punct_free');
+        punctFree = l.lookupFunction<_VoidPtrN, QvVoidPtrFn>('qv_punct_free'),
+        _verify = l.lookupFunction<
+            Int32 Function(Pointer<Uint8>, Size, Pointer<Utf8>),
+            int Function(
+                Pointer<Uint8>, int, Pointer<Utf8>)>('qv_verify_catalog');
+
+  final int Function(Pointer<Uint8>, int, Pointer<Utf8>) _verify;
+
+  /// Whether [sigHex] is a valid signature of [data] by the catalog key.
+  bool verifyCatalog(Uint8List data, String sigHex) => using((arena) {
+        final p = arena<Uint8>(data.isEmpty ? 1 : data.length);
+        p.asTypedList(data.length).setAll(0, data);
+        return _verify(
+                p, data.length, sigHex.trim().toNativeUtf8(allocator: arena)) ==
+            1;
+      });
 
   final Pointer<Utf8> Function() _version;
   final void Function(Pointer<Utf8>) _stringFree;

@@ -74,7 +74,7 @@ class QazStt extends ModelEngine {
   SttSession? _session;
   _Listen? _listen;
   final ValueNotifier<bool> _listening = ValueNotifier(false);
-  int _decodeToken = 0;
+  static int _decodeToken = 0;
 
   /// Opens the recognizer. Throws [QazModelNotInstalled] if `stt-kk` (or
   /// `punct-kk` with [punctuation]) is not installed.
@@ -160,8 +160,12 @@ class QazStt extends ModelEngine {
   SttSession session() {
     checkOpen();
     final old = _session;
-    if (old != null) unawaited(old.cancel());
-    return _session = SttSession._(this);
+    final s = _session = SttSession._(this);
+    if (old != null) {
+      // The old session's reset must reach the engine before our first audio.
+      s._feeding = old.cancel().catchError((Object _) {});
+    }
+    return s;
   }
 
   /// Whether [listen] is recording.
@@ -251,9 +255,10 @@ class QazStt extends ModelEngine {
       throw QazEngineError('file not found: $path', kind: 'audio');
     }
     final p = QazVoice.internals.platform;
-    return use(() async {
-      final placeholder = _session = SttSession._(this);
-      try {
+    // Claim the engine before the model loads, so no session starts meanwhile.
+    final placeholder = _session = SttSession._(this);
+    try {
+      return await use(() async {
         final wav = await readWavInfo(file);
         var reported = 0;
         void report(double fraction, List<RawResult> finals, double base) {
@@ -308,10 +313,13 @@ class QazStt extends ModelEngine {
           await sub.cancel();
           if (await tmp.exists()) await tmp.delete();
         }
-      } finally {
-        if (identical(_session, placeholder)) _session = null;
+      });
+    } finally {
+      if (identical(_session, placeholder)) {
+        _session = null;
+        touch();
       }
-    });
+    }
   }
 
   static SttResult _final(RawResult r) => SttResult(
@@ -441,15 +449,18 @@ class SttSession {
     _checkOpen();
     await _feeding;
     _partialTimer?.cancel();
-    final tail = await _stt.use(() => _stt._backend.finish());
-    for (final f in tail) {
-      _emitFinal(f);
+    try {
+      final tail = await _stt.use(() => _stt._backend.finish());
+      for (final f in tail) {
+        _emitFinal(f);
+      }
+      if (_speaking) {
+        _speaking = false;
+        _events.add(SttEvent.speechEnd);
+      }
+    } finally {
+      await _close();
     }
-    if (_speaking) {
-      _speaking = false;
-      _events.add(SttEvent.speechEnd);
-    }
-    await _close();
     return finals;
   }
 
@@ -491,6 +502,11 @@ class SttSession {
   Future<void> _close({bool force = false}) async {
     _closed = true;
     _partialTimer?.cancel();
+    // A session that the microphone feeds: closing it ends listening too.
+    final l = _stt._listen;
+    if (l != null && identical(l.session, this) && !l.stopping) {
+      unawaited(_stt.stopListening());
+    }
     if (identical(_stt._session, this)) {
       _stt._session = null;
       _stt.touch();

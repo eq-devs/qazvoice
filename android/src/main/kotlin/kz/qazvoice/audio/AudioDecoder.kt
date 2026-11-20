@@ -51,6 +51,13 @@ object AudioDecoder {
             var rate = inFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var channels = inFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             val durationUs = if (inFmt.containsKey(MediaFormat.KEY_DURATION)) inFmt.getLong(MediaFormat.KEY_DURATION) else 0L
+            // Decoded PCM can be far larger than the file: check there is room for it.
+            val estimate = durationUs / 1000 * rate / 1000 * channels * 2
+            val free = runCatching { android.os.StatFs(output.absoluteFile.parent).availableBytes }.getOrDefault(Long.MAX_VALUE)
+            if (estimate + (64L shl 20) > free) {
+                throw kz.qazvoice.download.DownloadException("storage", "not enough storage to decode",
+                    mapOf("needed" to estimate + (64L shl 20), "available" to free))
+            }
             val c = MediaCodec.createDecoderByType(mime)
             codec = c
             c.configure(inFmt, null, null, 0)

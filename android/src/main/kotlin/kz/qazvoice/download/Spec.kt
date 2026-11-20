@@ -21,7 +21,7 @@ data class JobSpec(
         require(files.isNotEmpty()) { "no files" }
         for (f in files) {
             require(isSafeName(f.name)) { "bad file name ${f.name}" }
-            require(f.size >= 0) { "bad size" }
+            require(f.size in 0..MAX_FILE) { "bad size" }
             require(SHA.matches(f.sha256)) { "bad sha256 for ${f.name}" }
             require(f.urls.isNotEmpty()) { "no urls for ${f.name}" }
             for (u in f.urls) {
@@ -30,10 +30,19 @@ data class JobSpec(
             }
         }
         require(files.map { it.name }.toSet().size == files.size) { "duplicate file names" }
+        require(files.size <= 64) { "too many files" }
     }
 
     companion object {
+        /** Largest file a model may have (4 GiB); 64 files at most, so the total cannot overflow. */
+        const val MAX_FILE = 4L shl 30
         val ID = Regex("^[a-z0-9][a-z0-9-]{0,40}$")
+
+        /** Throws unless [id] is a safe model id (it becomes a directory name). */
+        fun checkId(id: String?): String {
+            require(id != null && ID.matches(id)) { "bad model id" }
+            return id
+        }
         val SHA = Regex("^[0-9a-f]{64}$")
         private val NAME = Regex("^[A-Za-z0-9_-][A-Za-z0-9._-]{0,100}$")
         fun isSafeName(n: String) = NAME.matches(n) && !n.contains("..") &&

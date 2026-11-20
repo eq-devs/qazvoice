@@ -16,14 +16,17 @@ String formatDuration(Duration d) {
 
 /// Kazakh text for every plugin error.
 String describeError(Object e) => switch (e) {
-      QazModelNotInstalled(:final modelId) => 'Алдымен «$modelId» моделін жүктеңіз',
+      QazModelNotInstalled(:final modelId) =>
+        'Алдымен «$modelId» моделін жүктеңіз',
       QazInsufficientStorage(:final neededBytes) =>
         'Жад жеткіліксіз: ${formatBytes(neededBytes)} бос орын керек',
-      QazChecksumMismatch(:final fileName) => 'Файл бүлінген ($fileName), қайта жүктеңіз',
+      QazChecksumMismatch(:final fileName) =>
+        'Файл бүлінген ($fileName), қайта жүктеңіз',
       QazNetworkError() => 'Желі қатесі: ${e.message}',
       QazUnsupportedDevice() => 'Бұл құрылғы қолдамайды: ${e.message}',
-      QazPermissionDenied(:final permission) =>
-        permission == 'microphone' ? 'Микрофонға рұқсат берілмеді' : 'Рұқсат берілмеді',
+      QazPermissionDenied(:final permission) => permission == 'microphone'
+          ? 'Микрофонға рұқсат берілмеді'
+          : 'Рұқсат берілмеді',
       QazCancelled() => 'Тоқтатылды',
       QazEngineError() => 'Қате: ${e.message}',
       _ => 'Қате: $e',
@@ -86,7 +89,8 @@ class SectionTitle extends StatelessWidget {
 
 /// A row of bars that follows a 0..1 level stream.
 class LevelMeter extends StatefulWidget {
-  const LevelMeter({super.key, required this.level, this.bars = 24, this.height = 40});
+  const LevelMeter(
+      {super.key, required this.level, this.bars = 24, this.height = 40});
   final Stream<double>? level;
   final int bars;
   final double height;

@@ -7,6 +7,7 @@
 //
 // Skipped when QAZVOICE_LIB is not set.
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qazvoice/qazvoice.dart';
@@ -18,7 +19,8 @@ void main() {
   final lib = Platform.environment['QAZVOICE_LIB'];
   final models = Platform.environment['QAZVOICE_MODELS'];
   final skipLib = lib == null ? 'QAZVOICE_LIB not set' : null;
-  final skipModels = skipLib ?? (models == null ? 'QAZVOICE_MODELS not set' : null);
+  final skipModels =
+      skipLib ?? (models == null ? 'QAZVOICE_MODELS not set' : null);
 
   setUpAll(() {
     if (lib != null) QvLib.overridePath = lib;
@@ -41,6 +43,16 @@ void main() {
       expect(s.map((x) => x.text), ['Сәлем!', 'Қалың қалай? т.б. және']);
       expect(t.substring(s[1].start, s[1].end), s[1].text);
     });
+    test('catalog signature: only the built-in key is trusted', () {
+      final data =
+          File('rust/qazvoice-ffi/tests/sig_fixture.json').readAsBytesSync();
+      final sig = File('rust/qazvoice-ffi/tests/sig_fixture.json.sig')
+          .readAsStringSync();
+      expect(QvLib.instance.verifyCatalog(data, sig), isTrue);
+      final bad = Uint8List.fromList(data)..[0] ^= 1;
+      expect(QvLib.instance.verifyCatalog(bad, sig), isFalse);
+      expect(QvLib.instance.verifyCatalog(data, 'ab' * 64), isFalse);
+    });
     test('odd input does not crash', () {
       expect(QazText.toLatin(''), '');
       expect(QazText.toLatin('a\u0000b'), isA<String>());
@@ -52,7 +64,8 @@ void main() {
     setUpAll(() async {
       QazVoice.useMock(
         platform: MockQazPlatform(
-            modelsDir: models, installed: {'tts-kk': 1, 'stt-kk': 1, 'punct-kk': 1}),
+            modelsDir: models,
+            installed: {'tts-kk': 1, 'stt-kk': 1, 'punct-kk': 1}),
         tts: NativeTtsBackend.new,
         stt: NativeSttBackend.new,
         punct: NativePunctBackend.new,
@@ -68,14 +81,16 @@ void main() {
       const text = 'Бүгін ауа райы жақсы. Біз саябаққа барамыз.';
       final chunks = await tts.synthesize(text, speaker: 2).toList();
       expect(chunks, hasLength(2));
-      expect(text.substring(chunks[1].start, chunks[1].end), 'Біз саябаққа барамыз.');
+      expect(text.substring(chunks[1].start, chunks[1].end),
+          'Біз саябаққа барамыз.');
       final wav = await tts.saveAudio('${dir.path}/a.wav', text);
       await tts.close();
 
       final stt = await QazStt.open(punctuation: true, numbersToDigits: true);
       final finals = <SttResult>[];
       final progress = <double>[];
-      final r = await stt.transcribeFile(wav.path, onProgress: progress.add, onResult: finals.add);
+      final r = await stt.transcribeFile(wav.path,
+          onProgress: progress.add, onResult: finals.add);
       final all = r.map((x) => x.text).join(' ');
       // ignore: avoid_print
       print('transcript: $all');
@@ -97,7 +112,8 @@ void main() {
         await s.addPcm16(samples.sublist(i, end), sampleRate: 22050);
       }
       final live = await s.finish();
-      expect(live.map((x) => x.text).join(' ').toLowerCase(), contains('саябаққа'));
+      expect(live.map((x) => x.text).join(' ').toLowerCase(),
+          contains('саябаққа'));
       expect(events.first, SttEvent.speechStart);
 
       expect(await QazText.punctuate('сәлем қалың қалай'), startsWith('Сәлем'));

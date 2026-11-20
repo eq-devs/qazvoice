@@ -221,7 +221,8 @@ class MockQazPlatform extends QazPlatform {
   Stream<Map<String, Object?>> get events => _ev.stream;
 
   /// Simulates Android's onTrimMemory (memory pressure).
-  void emitTrimMemory([int level = 15]) => _ev.add({'type': 'trimMemory', 'level': level});
+  void emitTrimMemory([int level = 15]) =>
+      _ev.add({'type': 'trimMemory', 'level': level});
 
   void _emit(String id, Map<String, Object?> s) {
     _states[id] = s;
