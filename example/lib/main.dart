@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:qazvoice/qazvoice.dart';
 
+import 'log_page.dart';
 import 'models_page.dart';
 import 'stt_page.dart';
 import 'text_page.dart';
@@ -49,6 +50,7 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _init() async {
+    LogBuffer.instance.start();
     try {
       // A development mirror can be passed at build time, e.g.
       // --dart-define=QAZVOICE_MIRROR=http://10.0.2.2:8765/{id}/{file}
@@ -77,7 +79,14 @@ class _HomeState extends State<Home> {
     const pages = [ModelsPage(), TtsPage(), SttPage(), TextPage()];
     const titles = ['Модельдер', 'Дауыстау', 'Тану', 'Мәтін'];
     return Scaffold(
-      appBar: AppBar(title: Text(titles[_tab])),
+      appBar: AppBar(title: Text(titles[_tab]), actions: [
+        IconButton(
+          tooltip: 'Журнал',
+          icon: const Icon(Icons.receipt_long_outlined),
+          onPressed: () => Navigator.of(context)
+              .push(MaterialPageRoute<void>(builder: (_) => const LogPage())),
+        ),
+      ]),
       body: IndexedStack(index: _tab, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,

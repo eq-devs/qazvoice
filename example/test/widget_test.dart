@@ -25,6 +25,8 @@ void main() {
     // The voice screen is now usable.
     await tester.tap(find.byIcon(Icons.record_voice_over_outlined));
     await settle(tester, 500);
+    await tester.scrollUntilVisible(find.byKey(const Key('speak')), 200,
+        scrollable: find.byType(Scrollable).last);
     expect(find.byKey(const Key('speak')), findsOneWidget);
     await tester.tap(find.byKey(const Key('speak')));
     await settle(tester, 300);

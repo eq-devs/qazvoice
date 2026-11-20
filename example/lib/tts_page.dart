@@ -31,6 +31,8 @@ class _TtsState extends State<_Tts> {
   QazTts? _tts;
   int _speaker = 0;
   double _speed = 1.0;
+  double _pauseMs = 250;
+  QazAudioFormat _format = QazAudioFormat.m4a;
   bool _busy = false;
   bool _loading = true;
   String? _status;
@@ -89,7 +91,10 @@ class _TtsState extends State<_Tts> {
     if (tts == null) return;
     try {
       final t = Stopwatch()..start();
-      await tts.speak(_text.text, speaker: _speaker, speed: _speed);
+      await tts.speak(_text.text,
+          speaker: _speaker,
+          speed: _speed,
+          sentencePause: Duration(milliseconds: _pauseMs.round()));
       if (mounted) {
         setState(() => _status = 'Оқылды (${formatDuration(t.elapsed)})');
       }
@@ -104,18 +109,23 @@ class _TtsState extends State<_Tts> {
     setState(() => _busy = true);
     try {
       final dir = await getApplicationDocumentsDirectory();
+      final ext = _format == QazAudioFormat.wav ? 'wav' : 'm4a';
       final path =
-          '${dir.path}/qazvoice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          '${dir.path}/qazvoice_${DateTime.now().millisecondsSinceEpoch}.$ext';
       final t = Stopwatch()..start();
       final f = await tts.saveAudio(path, _text.text,
-          format: QazAudioFormat.m4a, speaker: _speaker, speed: _speed);
+          format: _format,
+          speaker: _speaker,
+          speed: _speed,
+          sentencePause: Duration(milliseconds: _pauseMs.round()));
       final size = await f.length();
       if (!mounted) return;
       setState(() => _status =
           'Сақталды: ${f.uri.pathSegments.last} · ${formatBytes(size)} · ${t.elapsedMilliseconds} мс');
       if (share) {
-        await SharePlus.instance.share(ShareParams(
-            files: [XFile(f.path, mimeType: 'audio/mp4')], text: _text.text));
+        await SharePlus.instance.share(ShareParams(files: [
+          XFile(f.path, mimeType: ext == 'wav' ? 'audio/wav' : 'audio/mp4')
+        ], text: _text.text));
       }
     } catch (e) {
       if (mounted) showError(context, e);
@@ -169,6 +179,29 @@ class _TtsState extends State<_Tts> {
             label: '${_speed.toStringAsFixed(2)}×',
             onChanged: (v) => setState(() => _speed = v),
           ),
+          Text('Сөйлем арасындағы үзіліс: ${_pauseMs.round()} мс',
+              style: theme.textTheme.titleSmall),
+          Slider(
+            value: _pauseMs,
+            min: 0,
+            max: 1000,
+            divisions: 20,
+            label: '${_pauseMs.round()} мс',
+            onChanged: (v) => setState(() => _pauseMs = v),
+          ),
+          Row(children: [
+            Text('Файл пішімі:', style: theme.textTheme.titleSmall),
+            const SizedBox(width: 12),
+            SegmentedButton<QazAudioFormat>(
+              segments: const [
+                ButtonSegment(value: QazAudioFormat.m4a, label: Text('M4A')),
+                ButtonSegment(value: QazAudioFormat.wav, label: Text('WAV')),
+              ],
+              selected: {_format},
+              onSelectionChanged: (v) => setState(() => _format = v.first),
+            ),
+          ]),
+          const SizedBox(height: 8),
           LevelMeter(level: tts.level, bars: 32, height: 48),
           const SizedBox(height: 16),
           ValueListenableBuilder<bool>(
@@ -189,7 +222,7 @@ class _TtsState extends State<_Tts> {
               ),
               const SizedBox(width: 8),
               IconButton.outlined(
-                tooltip: 'm4a сақтау',
+                tooltip: 'Файлға сақтау',
                 onPressed: _busy || speaking ? null : () => _save(share: false),
                 icon: const Icon(Icons.save_alt),
               ),
