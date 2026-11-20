@@ -139,7 +139,9 @@ class QvLib {
     final path = overridePath ?? Platform.environment['QAZVOICE_LIB'];
     if (path != null && path.isNotEmpty) return DynamicLibrary.open(path);
     if (Platform.isAndroid) return DynamicLibrary.open('libqazvoice.so');
-    if (Platform.isIOS) return DynamicLibrary.process();
+    if (Platform.isIOS) {
+      return DynamicLibrary.open('QazVoiceNative.framework/QazVoiceNative');
+    }
     if (Platform.isMacOS) return DynamicLibrary.open('libqazvoice.dylib');
     if (Platform.isWindows) return DynamicLibrary.open('qazvoice.dll');
     return DynamicLibrary.open('libqazvoice.so');

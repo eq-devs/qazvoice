@@ -17,7 +17,7 @@ Everything runs on the phone. After a one-time model download, no network is nee
   continue after the app is swiped away.
 - **Never blocks the UI**: model loading and inference run on background isolates.
 
-Platforms: **Android** (arm64-v8a, armeabi-v7a, x86_64; Android 7.0+). iOS is coming.
+Platforms: **Android** (arm64-v8a, armeabi-v7a, x86_64; Android 7.0+) and **iOS** (15.1+, arm64).
 You do not need Rust or any native toolchain: the native libraries ship in the package.
 
 ## Install
@@ -35,6 +35,18 @@ To use the microphone (`QazStt.listen`), add this to `android/app/src/main/Andro
 
 The plugin already declares the permissions its downloader needs (`INTERNET`,
 `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`).
+
+On iOS, add a microphone usage text to `ios/Runner/Info.plist` (needed for `listen`):
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>Speech recognition uses the microphone.</string>
+```
+
+On iOS, downloads use a background `URLSession`. They continue while the app is
+suspended, and the system finishes them even if it terminates the app (not if
+the user force-quits it). iOS shows no download notification; use the
+`state`/`progress` streams in your UI.
 
 ## Models
 

@@ -13,7 +13,7 @@ import 'native/ffi.dart';
 import 'platform.dart';
 
 /// Version of this plugin.
-const String qazvoicePluginVersion = '0.0.1';
+const String qazvoicePluginVersion = '0.0.2';
 
 /// Why a download is not moving right now.
 enum WaitReason {
@@ -934,7 +934,7 @@ class _QazVoiceImpl implements QazInternals {
     final m = QazVoice.model(id);
     final d = await _platform.device();
     final abis = [for (final a in (d['abis'] as List? ?? const [])) '$a'];
-    const shipped = {'arm64-v8a', 'armeabi-v7a', 'x86_64'};
+    const shipped = {'arm64-v8a', 'armeabi-v7a', 'x86_64', 'arm64'};
     var lib = true;
     if (!_mock) {
       lib = QvLib.isAvailable;

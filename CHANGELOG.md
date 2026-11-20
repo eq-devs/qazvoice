@@ -1,3 +1,13 @@
+## 0.0.2
+
+- iOS support (iOS 15.1+, arm64 devices and Apple-silicon simulators), same Dart API:
+  background `URLSession` downloads (continue while the app is suspended or was
+  terminated by the system; resume data kept on pause), SHA-256 verification,
+  `AVAudioEngine` playback and microphone capture, `AVAssetReader` decoding of
+  audio/video files, AAC (.m4a) export, memory-warning release.
+  The native engine ships as a dynamic framework inside the package (Swift Package
+  Manager and CocoaPods both supported).
+
 ## 0.0.1
 
 First release (Android).

@@ -46,7 +46,7 @@ void main() {
       expect(m.downloadSize, greaterThan(100 << 20));
       expect(() => QazVoice.model('nope'), throwsArgumentError);
       expect(QazVoice.attributions.first.text, isNotEmpty);
-      expect(QazVoice.version, '0.0.1');
+      expect(QazVoice.version, '0.0.2');
     });
 
     test('download goes through progress to installed', () async {
