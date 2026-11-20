@@ -1,6 +1,6 @@
 name: qazvoice
 description: On-device Kazakh text-to-speech and speech recognition for Flutter. Works offline after a one-time model download; playback, microphone and background downloads built in.
-version: 0.0.3
+version: 0.0.4
 homepage: https://github.com/eq-devs/qazvoice
 repository: https://github.com/eq-devs/qazvoice
 issue_tracker: https://github.com/eq-devs/qazvoice/issues

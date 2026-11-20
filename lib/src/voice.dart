@@ -13,7 +13,7 @@ import 'native/ffi.dart';
 import 'platform.dart';
 
 /// Version of this plugin.
-const String qazvoicePluginVersion = '0.0.3';
+const String qazvoicePluginVersion = '0.0.4';
 
 /// Why a download is not moving right now.
 enum WaitReason {

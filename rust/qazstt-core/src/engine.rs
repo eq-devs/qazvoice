@@ -342,7 +342,7 @@ impl Engine {
     }
 
     fn postprocess(&mut self, raw: &str, interim: bool) -> String {
-        let mut t = kazakh::clean(raw);
+        let mut t = kazakh::clean(&kazakh::fix_tokenizer_artifacts(raw));
         if t.is_empty() {
             return t;
         }

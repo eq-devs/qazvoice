@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import 'audio.dart';
 import 'backends.dart';
+import 'catalog.dart';
 import 'engine.dart';
 import 'errors.dart';
 import 'voice.dart';
@@ -62,10 +63,21 @@ enum SttEvent {
 /// session.results.listen((r) => print(r.text));
 /// ```
 class QazStt extends ModelEngine {
-  QazStt._(this._backend, this._config, this._usesPunct, Duration? idleTimeout)
+  QazStt._(this._backend, this._config, this._usesPunct, this._modelId,
+      Duration? idleTimeout)
       : super(idleTimeout);
 
+  final String _modelId;
+
+  /// The recognition model this engine uses.
+  String get model => _modelId;
+
+  /// The default recognizer.
   static const modelId = 'stt-kk';
+
+  /// Optional, more accurate recognizer (GigaAM Multilingual, MIT): about
+  /// 24% fewer word errors on Kazakh read speech, ~1.6× slower, 253 MB download.
+  static const highAccuracyModelId = 'stt-kk-giga';
   static const punctModelId = 'punct-kk';
 
   final SttBackend _backend;
@@ -87,6 +99,7 @@ class QazStt extends ModelEngine {
   /// * [minSilence] — pause that ends an utterance (default 600 ms).
   /// * [maxSegment] — longest utterance before a forced cut (default 25 s).
   static Future<QazStt> open({
+    String model = modelId,
     bool punctuation = false,
     bool numbersToDigits = false,
     bool latin = false,
@@ -100,7 +113,11 @@ class QazStt extends ModelEngine {
   }) async {
     final internals = QazVoice.internals;
     await internals.ensureInit();
-    final model = internals.model(modelId)..ensureInstalled();
+    final m = internals.model(model)..ensureInstalled();
+    if (m.kind != QazModelKind.stt) {
+      throw ArgumentError.value(
+          model, 'model', 'not a speech recognition model');
+    }
     String? punctDir;
     if (punctuation) {
       final p = internals.model(punctModelId)..ensureInstalled();
@@ -108,7 +125,7 @@ class QazStt extends ModelEngine {
     }
     final t = threads > 0 ? threads : Platform.numberOfProcessors.clamp(2, 4);
     final config = <String, Object?>{
-      'model_path': model.directory,
+      'model_path': m.directory,
       if (punctDir != null) 'punct_model_path': punctDir,
       'latin': latin,
       'numbers_to_digits': numbersToDigits,
@@ -118,14 +135,15 @@ class QazStt extends ModelEngine {
       'min_silence_ms': minSilence?.inMilliseconds ?? 0,
       'max_segment_ms': maxSegment?.inMilliseconds ?? 0,
     };
-    final stt = QazStt._(internals.newStt(), config, punctuation, idleTimeout);
+    final stt =
+        QazStt._(internals.newStt(), config, punctuation, model, idleTimeout);
     internals.register(stt);
     if (preload) await stt.preload();
     return stt;
   }
 
   @override
-  Iterable<String> get modelIds => [modelId, if (_usesPunct) punctModelId];
+  Iterable<String> get modelIds => [_modelId, if (_usesPunct) punctModelId];
 
   @override
   bool get isLoaded => _backend.isLoaded;

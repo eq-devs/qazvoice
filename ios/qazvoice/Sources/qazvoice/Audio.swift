@@ -66,7 +66,7 @@ final class PcmPlayer {
   init(rate: Int, onPosition: @escaping (Int64, Double) -> Void) throws {
     self.rate = Double(rate)
     self.onPosition = onPosition
-    self.maxQueued = AVAudioFramePosition(rate * 3)
+    self.maxQueued = AVAudioFramePosition(rate * 30)
     guard let f = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(rate), channels: 1, interleaved: false) else {
       throw DownloadError("audio", "unsupported sample rate \(rate)")
     }

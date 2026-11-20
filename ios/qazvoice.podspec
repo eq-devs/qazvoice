@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'qazvoice'
-  s.version          = '0.0.3'
+  s.version          = '0.0.4'
   s.summary          = 'On-device Kazakh text-to-speech and speech recognition.'
   s.description      = <<-DESC
 On-device Kazakh text-to-speech and speech recognition for Flutter, with

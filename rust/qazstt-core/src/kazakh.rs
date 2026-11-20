@@ -53,6 +53,40 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '-' || c == '\'' || c == '’'
 }
 
+/// Undoes a quirk of the NVIDIA kk-ru tokenizer: its training text had "б"
+/// expanded to "басқа" and "т.б." to "тағы басқа" inside words, so the model
+/// sometimes writes "тағы басқаиғи" for "табиғи" or "басқаасшысы" for
+/// "басшысы". Neither sequence occurs in Kazakh ("тағы басқа" is always
+/// followed by a space; "басқа" is never followed directly by a vowel).
+pub fn fix_tokenizer_artifacts(text: &str) -> String {
+    if !text.contains("басқа") {
+        return text.to_string();
+    }
+    const VOWELS: &str = "аәеёиоөұүыіэюя";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("басқа") {
+        let after = &rest[i + "басқа".len()..];
+        let next = after.chars().next();
+        let before = &rest[..i];
+        if before.ends_with("тағы ") && next.is_some_and(|c| c.is_alphabetic()) {
+            // "тағы басқаиғи" → "табиғи"
+            out.push_str(&before[..before.len() - "тағы ".len()]);
+            out.push_str("таб");
+        } else if next.is_some_and(|c| VOWELS.contains(c.to_lowercase().next().unwrap_or(c))) {
+            // "басқаасшысы" → "басшысы", "басқаол" → "бол"
+            out.push_str(before);
+            out.push('б');
+        } else {
+            out.push_str(before);
+            out.push_str("басқа");
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// ASR output clean-up: collapse whitespace, fix punctuation spacing, repair
 /// Latin lookalikes inside Cyrillic words, strip bracketed non-speech tags
 /// like `[музыка]` / `(аплодисменттер)`.
@@ -547,6 +581,17 @@ fn compose_number(run: &[(u64, NumKind, String)]) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tokenizer_artifacts() {
+        assert_eq!(fix_tokenizer_artifacts("елде көптеген тағы басқаиғи ресурстар"), "елде көптеген табиғи ресурстар");
+        assert_eq!(fix_tokenizer_artifacts("мектеп басқаасшысы келді"), "мектеп басшысы келді");
+        assert_eq!(fix_tokenizer_artifacts("басқаолды"), "болды");
+        // Real words and the real phrase stay.
+        for ok in ["тағы басқа жемістер", "басқару", "басқаша", "басқалар", "басқаға", "басқа адам", "басқарма"] {
+            assert_eq!(fix_tokenizer_artifacts(ok), ok);
+        }
+    }
 
     #[test]
     fn clean_fixes_spacing_and_tags() {

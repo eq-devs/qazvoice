@@ -25,6 +25,7 @@ class _Stt extends StatefulWidget {
 class _SttState extends State<_Stt> {
   QazStt? _stt;
   bool _punctuation = false;
+  bool _highAccuracy = false;
   bool _numbers = true;
   bool _latin = false;
   bool _autoStop = true;
@@ -72,7 +73,10 @@ class _SttState extends State<_Stt> {
     try {
       final punct =
           _punctuation && QazVoice.model(QazStt.punctModelId).isInstalled;
+      final giga = _highAccuracy &&
+          QazVoice.model(QazStt.highAccuracyModelId).isInstalled;
       final stt = await QazStt.open(
+        model: giga ? QazStt.highAccuracyModelId : QazStt.modelId,
         punctuation: punct,
         numbersToDigits: _numbers,
         latin: _latin,
@@ -215,6 +219,23 @@ class _SttState extends State<_Stt> {
                     }
                   : null,
             ),
+            Builder(builder: (context) {
+              final giga =
+                  QazVoice.model(QazStt.highAccuracyModelId).isInstalled;
+              return SwitchListTile(
+                title: const Text('Жоғары дәлдік (GigaAM)'),
+                subtitle: Text(giga
+                    ? 'Қатесі ~24% аз, сәл баяу'
+                    : '«stt-kk-giga» моделін жүктеңіз'),
+                value: _highAccuracy && giga,
+                onChanged: giga
+                    ? (v) {
+                        setState(() => _highAccuracy = v);
+                        _reopen();
+                      }
+                    : null,
+              );
+            }),
             SwitchListTile(
               title: const Text('Сандарды цифрмен жазу'),
               value: _numbers,

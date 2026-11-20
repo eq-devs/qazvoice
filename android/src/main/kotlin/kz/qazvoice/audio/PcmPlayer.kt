@@ -21,7 +21,7 @@ class PcmPlayer(
     ctx: Context,
     private val rate: Int,
     private val onPosition: (frames: Long, level: Float) -> Unit,
-    private val maxQueuedMs: Int = 3000,
+    private val maxQueuedMs: Int = 30_000,
 ) {
     private val queue = LinkedBlockingQueue<ByteArray>()
     @Volatile private var stopped = false

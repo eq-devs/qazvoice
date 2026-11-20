@@ -59,12 +59,14 @@ Models are not bundled with your app. Each one is downloaded on demand from
 | `tts-kk` | `QazTts` | 119 MB | 128 MB | ~400 MB |
 | `stt-kk` | `QazStt` | 153 MB | 196 MB | ~600 MB |
 | `punct-kk` | punctuation (optional) | 75 MB | 114 MB | ~300 MB |
+| `stt-kk-giga` | `QazStt(model: highAccuracyModelId)` (optional) | 253 MB | 322 MB | ~500 MB |
 
 Large files are downloaded zstd-compressed and unpacked in the background; both the
 download and the unpacked file are checked against SHA-256.
 
-Measured on a Pixel 8 Pro: speech recognition runs about 29× faster than real time
-(word error rate 10.6% on FLEURS Kazakh read speech); the voice speaks after about
+Accuracy on FLEURS Kazakh read speech (word error rate): `stt-kk` 9.3%,
+`stt-kk-giga` 7.8% (about 1.6× slower). Measured on a Pixel 8 Pro: `stt-kk` runs about
+29× faster than real time; the voice speaks after about
 0.8 s and synthesizes 1.1–1.6× faster than real time (slower when the phone is hot,
 and on lower-end phones).
 
@@ -150,7 +152,8 @@ await QazVoice.init(mirrors: [
 ## Text-to-speech
 
 ```dart
-final tts = await QazTts.open(threads: 0, idleTimeout: const Duration(minutes: 3));
+final tts = await QazTts.open(threads: 0, idleTimeout: const Duration(minutes: 3),
+    cacheBytes: 8 << 20); // repeated sentences come from this cache
 tts.speakers;    // 6 voices; pass the index as `speaker:`
 tts.sampleRate;  // 22050
 
@@ -178,6 +181,7 @@ Android reports memory pressure. The next call loads it again.
 
 ```dart
 final stt = await QazStt.open(
+  model: QazStt.modelId,    // or QazStt.highAccuracyModelId (GigaAM, more accurate)
   punctuation: true,        // needs the punct-kk model
   numbersToDigits: true,    // "жиырма бес" → "25"
   latin: false,             // output in the 2021 Latin alphabet
@@ -244,9 +248,12 @@ the STT screen (live microphone, toggles, file transcription) and the text tools
 The plugin is Apache-2.0. The models have their own licenses. **CC BY 4.0
 requires attribution**, so show `QazVoice.attributions` somewhere in your app:
 
-- `tts-kk`: Piper `kk_KZ-issai-high`, trained on KazakhTTS2 by ISSAI (Nazarbayev University). CC BY 4.0.
+- `tts-kk`: Piper `kk_KZ-issai-high`, trained on data from Mussakhojayeva et al. (2021),
+  "KazakhTTS: An Open-Source Kazakh Text-to-Speech Synthesis Dataset", Interspeech 2021,
+  ISSAI, Nazarbayev University. CC BY 4.0.
 - `stt-kk`: NVIDIA `stt_kk_ru_fastconformer_hybrid_large`, CC BY 4.0; Silero VAD, MIT.
 - `punct-kk`: `1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase`, Apache-2.0.
+- `stt-kk-giga`: GigaAM Multilingual by Sber AI, MIT; Silero VAD, MIT.
 
 ONNX Runtime (MIT) comes from the `com.microsoft.onnxruntime:onnxruntime-android` package.
 

@@ -1,3 +1,19 @@
+## 0.0.4
+
+- More accurate recognition: the default model's word error rate on FLEURS Kazakh
+  drops from 10.3% to 9.3%. The upstream NVIDIA tokenizer sometimes produces
+  corrupted pieces ("тағы басқаиғи" for "табиғи", "басқаасшысы" for "басшысы");
+  these are now repaired in post-processing.
+- Optional high-accuracy recognizer `stt-kk-giga` (GigaAM Multilingual, MIT):
+  `QazStt.open(model: QazStt.highAccuracyModelId)`. On FLEURS Kazakh: 7.8% WER vs
+  9.3%, about 1.6× slower (still 36× faster than real time on the emulator),
+  253 MB download. The default model is unchanged.
+- TTS look-ahead: synthesis keeps running up to 30 s ahead of playback, so short
+  slow-downs no longer cause gaps between sentences.
+- TTS cache: recently synthesized sentences are reused (`QazTts.open(cacheBytes:)`,
+  8 MB by default), so repeated prompts play instantly.
+- Attribution for the voice now cites the KazakhTTS paper, as ISSAI requests.
+
 ## 0.0.3
 
 - Smaller downloads: large model files are fetched as zstd copies and unpacked in

@@ -7,8 +7,9 @@ import 'package:qazvoice/src/default_catalog.dart';
 
 void main() {
   test('built-in catalog parses and has the three models', () {
-    final c = Catalog.parse(defaultCatalogJson, pluginVersion: '0.0.1');
-    expect(c.models.keys, containsAll(['tts-kk', 'stt-kk', 'punct-kk']));
+    final c = Catalog.parse(defaultCatalogJson, pluginVersion: '0.0.4');
+    expect(c.models.keys,
+        containsAll(['tts-kk', 'stt-kk', 'punct-kk', 'stt-kk-giga']));
     final tts = c.models['tts-kk']!;
     expect(tts.kind, QazModelKind.tts);
     expect(tts.files.map((f) => f.name), ['voice.onnx', 'voice.onnx.json']);
@@ -20,6 +21,13 @@ void main() {
     expect(tts.name('kk'), 'Қазақша дауыс');
     expect(tts.attribution, contains('ISSAI'));
     expect(c.models['stt-kk']!.files.length, 5);
+    expect(c.models['stt-kk-giga']!.license, 'MIT');
+    // Older plugins never see the optional model.
+    expect(
+        Catalog.parse(defaultCatalogJson, pluginVersion: '0.0.3')
+            .models
+            .containsKey('stt-kk-giga'),
+        isFalse);
   });
 
   test('mirror templates resolve and encode', () {

@@ -84,6 +84,33 @@ class QazTts extends ModelEngine {
   final List<String> speakers;
 
   final ValueNotifier<bool> _speaking = ValueNotifier(false);
+
+  // Recently synthesized pieces (UI prompts and replays come back instantly).
+  final _cache = <String, Int16List>{}; // insertion order = LRU order
+  int _cacheBytes = 0;
+  int _cacheLimit = 8 << 20;
+
+  Future<Int16List> _synthCached(
+      String piece, int speaker, double speed) async {
+    if (_cacheLimit <= 0) return _backend.synth(piece, speaker, speed);
+    final key = '$speaker|${speed.toStringAsFixed(3)}|$piece';
+    final hit = _cache.remove(key);
+    if (hit != null) {
+      _cache[key] = hit; // most recently used
+      return hit;
+    }
+    final pcm = await _backend.synth(piece, speaker, speed);
+    if (pcm.lengthInBytes <= _cacheLimit ~/ 4) {
+      _cache[key] = pcm;
+      _cacheBytes += pcm.lengthInBytes;
+      while (_cacheBytes > _cacheLimit && _cache.isNotEmpty) {
+        final k = _cache.keys.first;
+        _cacheBytes -= _cache.remove(k)!.lengthInBytes;
+      }
+    }
+    return pcm;
+  }
+
   final ValueNotifier<TtsChunk?> _current = ValueNotifier(null);
   final StreamController<double> _level = StreamController.broadcast();
   _Speech? _speech;
@@ -93,10 +120,13 @@ class QazTts extends ModelEngine {
   ///
   /// [threads] 0 = choose by CPU count. [idleTimeout] frees the model's
   /// memory after that long without use (it reloads on the next call).
+  /// [cacheBytes] keeps recently synthesized pieces so repeated sentences
+  /// (prompts, replays) need no new synthesis; 0 turns the cache off.
   static Future<QazTts> open({
     int threads = 0,
     Duration? idleTimeout = const Duration(minutes: 3),
     bool preload = false,
+    int cacheBytes = 8 << 20,
   }) async {
     final internals = QazVoice.internals;
     await internals.ensureInit();
@@ -125,7 +155,8 @@ class QazTts extends ModelEngine {
     }
     final t = threads > 0 ? threads : Platform.numberOfProcessors.clamp(2, 4);
     final tts = QazTts._(internals.newTts(), path, rate,
-        List.unmodifiable(speakers), t, idleTimeout);
+        List.unmodifiable(speakers), t, idleTimeout)
+      .._cacheLimit = cacheBytes;
     internals.register(tts);
     if (preload) await tts.preload();
     return tts;
@@ -151,7 +182,11 @@ class QazTts extends ModelEngine {
   }
 
   @override
-  Future<void> doUnload() => _backend.unload();
+  Future<void> doUnload() {
+    _cache.clear();
+    _cacheBytes = 0;
+    return _backend.unload();
+  }
 
   @override
   Future<void> doClose() async {
@@ -191,15 +226,14 @@ class QazTts extends ModelEngine {
         await use(() async {
           final plan = await _backend.plan(text);
           final pause = sentencePause.inMicroseconds * sampleRate ~/ 1000000;
-          Future<Int16List>? next = plan.isEmpty
-              ? null
-              : _backend.synth(plan[0].piece, speaker, speed);
+          Future<Int16List>? next =
+              plan.isEmpty ? null : _synthCached(plan[0].piece, speaker, speed);
           var index = 0;
           for (var i = 0; i < plan.length; i++) {
             final pcm = await next!;
             if (cancelled) return;
             next = i + 1 < plan.length
-                ? _backend.synth(plan[i + 1].piece, speaker, speed)
+                ? _synthCached(plan[i + 1].piece, speaker, speed)
                 : null;
             next?.ignore();
             if (pcm.isEmpty) continue;

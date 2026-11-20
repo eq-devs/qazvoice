@@ -46,7 +46,7 @@ void main() {
       expect(m.downloadSize, greaterThan(100 << 20));
       expect(() => QazVoice.model('nope'), throwsArgumentError);
       expect(QazVoice.attributions.first.text, isNotEmpty);
-      expect(QazVoice.version, '0.0.3');
+      expect(QazVoice.version, '0.0.4');
     });
 
     test('download goes through progress to installed', () async {
@@ -151,6 +151,40 @@ void main() {
         throwsA(isA<QazModelNotInstalled>()
             .having((e) => e.modelId, 'id', 'punct-kk')));
     expect(() => QazText.punctuate('x'), throwsA(isA<QazModelNotInstalled>()));
+  });
+
+  test('repeated sentences come from the cache; cache can be off', () async {
+    var calls = 0;
+    platform = MockQazPlatform(installed: {'tts-kk': 1});
+    QazVoice.useMock(
+        platform: platform, tts: () => _CountingTts(() => calls++));
+    await QazVoice.init(fetchCatalog: false);
+    final tts = await QazTts.open();
+    await tts.synthesizeAll('Сәлем. Қалайсыз?');
+    final first = calls;
+    await tts.synthesizeAll('Сәлем. Қалайсыз?');
+    expect(calls, first, reason: 'second time fully cached');
+    await tts.synthesizeAll('Сәлем.', speed: 1.5);
+    expect(calls, first + 1, reason: 'different speed is a different entry');
+    await tts.close();
+    final off = await QazTts.open(cacheBytes: 0);
+    await off.preload(); // includes one warm-up synthesis
+    final before = calls;
+    await off.synthesizeAll('Сәлем.');
+    await off.synthesizeAll('Сәлем.');
+    expect(calls - before, 2);
+    await off.close();
+  });
+
+  test('high-accuracy recognizer is selected by model id', () async {
+    await setUpMock(installed: {'stt-kk-giga': 1});
+    expect(() => QazStt.open(), throwsA(isA<QazModelNotInstalled>()));
+    final stt = await QazStt.open(model: QazStt.highAccuracyModelId);
+    expect(stt.model, 'stt-kk-giga');
+    expect(QazVoice.model('stt-kk-giga').downloadSize,
+        lessThan(QazVoice.model('stt-kk-giga').diskSize));
+    await stt.close();
+    expect(() => QazStt.open(model: 'tts-kk'), throwsA(anything));
   });
 
   group('tts', () {
@@ -338,4 +372,14 @@ void main() {
       expect(() => stt.session(), throwsA(isA<QazEngineError>()));
     });
   });
+}
+
+class _CountingTts extends MockTtsBackend {
+  _CountingTts(this.onSynth);
+  final void Function() onSynth;
+  @override
+  Future<Int16List> synth(String piece, int speaker, double speed) {
+    onSynth();
+    return super.synth(piece, speaker, speed);
+  }
 }

@@ -63,9 +63,12 @@ void main() {
   group('engines with real models', () {
     setUpAll(() async {
       QazVoice.useMock(
-        platform: MockQazPlatform(
-            modelsDir: models,
-            installed: {'tts-kk': 1, 'stt-kk': 1, 'punct-kk': 1}),
+        platform: MockQazPlatform(modelsDir: models, installed: {
+          'tts-kk': 1,
+          'stt-kk': 1,
+          'punct-kk': 1,
+          'stt-kk-giga': 1
+        }),
         tts: NativeTtsBackend.new,
         stt: NativeSttBackend.new,
         punct: NativePunctBackend.new,
@@ -117,6 +120,17 @@ void main() {
       expect(events.first, SttEvent.speechStart);
 
       expect(await QazText.punctuate('сәлем қалың қалай'), startsWith('Сәлем'));
+
+      // The optional high-accuracy recognizer on the same audio.
+      if (Directory('$models/stt-kk-giga').existsSync()) {
+        final giga = await QazStt.open(model: QazStt.highAccuracyModelId);
+        final g = await giga.transcribeFile(wav.path);
+        final gt = g.map((x) => x.text).join(' ');
+        // ignore: avoid_print
+        print('giga: $gt');
+        expect(gt.toLowerCase(), contains('саябаққа'));
+        await giga.close();
+      }
       await stt.close();
       await QazText.releasePunctuation();
       await dir.delete(recursive: true);

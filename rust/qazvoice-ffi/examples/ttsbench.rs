@@ -12,7 +12,9 @@ fn s(p: *mut c_char) -> String {
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let threads: u32 = a[2].parse().unwrap();
-    let text = "Сәлеметсіз бе! Бүгін Алматыда ауа райы жақсы, күн ашық болады. Ертең жаңбыр жаууы мүмкін, сондықтан қолшатыр алып шығыңыз. 2024 жылы қалада 25 мың жаңа ағаш отырғызылды.";
+    let text = std::env::var("QV_TEXT").unwrap_or_else(|_| "Бүгін Алматыда ауа райы өте жақсы болады, күн ашық, жел әлсіз, сондықтан саябақта серуендеуге болады. Ертең жаңбыр жаууы мүмкін, сондықтан қолшатыр алып шығыңыз. 2024 жылы қалада 25 мың жаңа ағаш отырғызылды.".into());
+    let text = text.as_str();
+    if std::env::var("QV_NOSPIN").is_ok() { qazstt_core::set_thread_spinning(false); }
     let t0 = Instant::now();
     let mut err: *mut c_char = std::ptr::null_mut();
     let path = CString::new(a[1].clone()).unwrap();
@@ -23,6 +25,9 @@ fn main() {
     let t1 = Instant::now();
     let mut first = None;
     let mut samples = 0usize;
+    if std::env::var("QV_SHOW").is_ok() {
+        for item in plan.as_array().unwrap() { eprintln!("piece: {}", item["piece"]); }
+    }
     for item in plan.as_array().unwrap() {
         let piece = CString::new(item["piece"].as_str().unwrap()).unwrap();
         let mut n = 0usize;
