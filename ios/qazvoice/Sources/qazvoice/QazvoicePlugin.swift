@@ -67,10 +67,18 @@ public class QazvoicePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     func id() throws -> String { try JobSpec.checkId(args["id"] as? String) }
     let dm = DownloadManager.shared
     switch call.method {
+    case "init", "device", "tempDir", "requestNotificationPermission", "requestMicrophonePermission",
+         "playerCreate", "playerWrite", "playerFinish", "playerStop", "decode", "cancelDecode", "encodeM4a":
+      break
+    default:
+      // Download calls before init: set the store up first instead of crashing.
+      dm.initialize()
+    }
+    switch call.method {
     case "init":
       bg(result) {
         dm.initialize()
-        dm.listener = { [weak self] e in self?.send(e) }
+        dm.setListener { [weak self] e in self?.send(e) }
         return ["modelsDir": dm.store.root.path, "states": dm.states()]
       }
     case "device": bg(result) { self.device() }
@@ -177,9 +185,11 @@ public class QazvoicePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       return
     }
     mic?.stop()
-    let m = Mic(rate: rate) { data in
+    let m = Mic(rate: rate, onChunk: { data in
       DispatchQueue.main.async { sink(FlutterStandardTypedData(bytes: data)) }
-    }
+    }, onError: { msg in
+      DispatchQueue.main.async { sink(FlutterError(code: "audio", message: msg, details: nil)) }
+    })
     do {
       try m.start()
       mic = m

@@ -1,5 +1,7 @@
 import CommonCrypto
 import Foundation
+import Network
+import UIKit
 
 /// One download location of a file; headers go to this URL's origin only.
 struct UrlSpec: Codable { let url: String; let headers: [String: String] }
@@ -216,7 +218,15 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
   private var background: URLSession!
   private var foreground: URLSession!
   var backgroundCompletion: (() -> Void)?
-  var listener: (([String: Any]) -> Void)?
+  private var listener: (([String: Any]) -> Void)?
+  /// No job starts before the system's surviving tasks are re-attached.
+  private var attached = false
+  private let path = NWPathMonitor()
+  private var pathOK = true
+  private var pathExpensive = false
+  private var pendingWork = 0
+
+  func setListener(_ l: @escaping ([String: Any]) -> Void) { q.sync { listener = l } }
   private var initialized = false
 
   private final class Job {
@@ -265,19 +275,24 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
         order.append(p.spec.id)
       }
     }
+    // Network state for "waiting" events (background sessions get no callback for it).
+    path.pathUpdateHandler = { [weak self] p in
+      guard let self = self else { return }
+      self.q.async {
+        self.pathOK = p.status == .satisfied
+        self.pathExpensive = p.isExpensive
+        self.networkChanged()
+      }
+    }
+    path.start(queue: DispatchQueue.global(qos: .utility))
     // Re-attach to transfers the system kept running while the app was gone.
     background.getAllTasks { tasks in
       self.q.async {
         for t in tasks {
-          guard let d = t as? URLSessionDownloadTask, let desc = d.taskDescription,
-                let id = desc.split(separator: "|").first.map(String.init), let j = self.jobs[id] else {
-            t.cancel(); continue
-          }
-          j.task = d; j.status = "downloading"; self.running = id
-          if let i = j.spec.files.firstIndex(where: { $0.name == desc.split(separator: "|").dropFirst().first.map(String.init) }) {
-            j.fileIndex = i
-          }
+          guard let d = t as? URLSessionDownloadTask, let j = self.adopt(d) else { t.cancel(); continue }
+          _ = j
         }
+        self.attached = true
         self.pump()
       }
     }
@@ -337,13 +352,22 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     q.sync {
       guard let j = self.jobs[id] else { return }
       if j.status == "queued" { self.markPaused(j); return }
-      guard j.status == "downloading", let t = j.task else { return }
+      guard j.status == "downloading" else { return }
+      guard let t = j.task else {
+        // Between tasks (backoff, hashing): the pending step sees the status and stops.
+        self.markPaused(j)
+        if self.running == id { self.running = nil }
+        self.pump()
+        return
+      }
       j.stopping = "pause"
       t.cancel { data in
         self.q.async {
+          // Cancelled or deleted meanwhile: that wins.
+          guard self.jobs[id] === j, j.stopping == "pause" else { return }
           if let d = data { try? d.write(to: self.resumeURL(j)) }
           self.markPaused(j)
-          self.running = nil
+          if self.running == id { self.running = nil }
           self.pump()
         }
       }
@@ -399,7 +423,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
       .reduce(0) { $0 + $1.size }
   }
 
-  private func received(_ j: Job) -> Int64 { min(j.spec.totalBytes, verifiedBytes(j) + (j.status == "downloading" ? j.currentWritten : 0)) }
+  private func received(_ j: Job) -> Int64 { min(j.spec.totalBytes, verifiedBytes(j) + (j.status == "downloading" || j.status == "paused" ? j.currentWritten : 0)) }
 
   private func markPaused(_ j: Job) {
     j.status = "paused"; j.task = nil; j.stopping = nil
@@ -425,6 +449,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
   }
 
   private func pump() {
+    guard attached else { return }
     if let r = running, jobs[r]?.status == "downloading" { return }
     running = nil
     guard let id = order.first(where: { jobs[$0]?.status == "queued" }), let j = jobs[id] else { return }
@@ -487,9 +512,40 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
   }
 
   private func job(for task: URLSessionTask) -> Job? {
-    guard let id = task.taskDescription?.split(separator: "|").first.map(String.init), let j = jobs[id], j.task === task
-    else { return nil }
+    guard let id = task.taskDescription?.split(separator: "|").first.map(String.init), let j = jobs[id] else { return nil }
+    if j.task === task { return j }
+    // A task the system finished (or ended) while the app was gone: adopt it.
+    if j.task == nil, j.stopping == nil, let d = task as? URLSessionDownloadTask { return adopt(d) }
+    return nil
+  }
+
+  /// Ties a system task to its job (on q). Nil if the job is gone or busy with another task.
+  private func adopt(_ d: URLSessionDownloadTask) -> Job? {
+    let parts = (d.taskDescription ?? "").split(separator: "|").map(String.init)
+    guard parts.count == 2, let j = jobs[parts[0]], j.stopping == nil,
+          j.status == "queued" || j.status == "downloading",
+          j.task == nil || j.task === d,
+          let i = j.spec.files.firstIndex(where: { $0.name == parts[1] }) else { return nil }
+    if let r = running, r != j.spec.id, jobs[r]?.status == "downloading" { return nil }
+    j.task = d; j.status = "downloading"; j.fileIndex = i
+    running = j.spec.id
     return j
+  }
+
+  private func networkChanged() {
+    guard let id = running, let j = jobs[id], j.status == "downloading" else { return }
+    let allowed = pathOK && !(j.spec.wifiOnly && pathExpensive)
+    if !allowed {
+      emit(id, ["status": "waiting", "reason": pathOK ? "wifi" : "network", "received": received(j), "total": j.spec.totalBytes])
+    } else {
+      emit(id, ["status": "downloading", "received": received(j), "total": j.spec.totalBytes, "speed": j.speed])
+    }
+  }
+
+  /// Mirror changed: resume data points at the old URL.
+  private func switchMirror(_ j: Job) {
+    j.mirror += 1; j.attempt = 0
+    try? FileManager.default.removeItem(at: resumeURL(j))
   }
 
   /// Retry with backoff; after `maxAttempts` (or a fatal status) try the next mirror.
@@ -497,7 +553,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     let f = j.spec.files[j.fileIndex]
     j.attempt += 1
     if fatalForMirror || j.attempt >= 5 {
-      j.mirror += 1; j.attempt = 0
+      switchMirror(j)
       if j.mirror >= f.urls.count {
         var extras: [String: Any] = [:]
         if let s = status { extras["status"] = s }
@@ -551,29 +607,41 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
       guard let j = self.job(for: downloadTask) else { try? FileManager.default.removeItem(at: tmp); return }
       j.task = nil
       if !(200..<300).contains(status) {
-        self.retry(j, "HTTP \(status)", fatalForMirror: [400, 401, 403, 404, 410, 451].contains(status), status: status)
+        self.retry(j, "HTTP \(status)", fatalForMirror: [400, 401, 403, 404, 410, 451].contains(status) || (300..<400).contains(status), status: status)
         return
       }
       let f = j.spec.files[j.fileIndex]
       // Hash off the session queue; this is the expensive part.
+      self.pendingWork += 1
+      // Thread-safe; keeps the app running while the file is hashed and installed.
+      var bgTask = UIBackgroundTaskIdentifier.invalid
+      bgTask = UIApplication.shared.beginBackgroundTask(withName: "qazvoice-verify") {
+        UIApplication.shared.endBackgroundTask(bgTask)
+      }
       DispatchQueue.global(qos: .utility).async {
+        defer {
+          self.q.async { self.pendingWork -= 1; self.flushBackgroundCompletion() }
+          UIApplication.shared.endBackgroundTask(bgTask)
+        }
         let ok = self.store.size(tmp) == f.size && sha256Hex(of: tmp) == f.sha256
         self.q.async {
           guard self.jobs[j.spec.id] === j, j.stopping == nil else { try? FileManager.default.removeItem(at: tmp); return }
           if ok {
             try? FileManager.default.moveItem(at: tmp, to: staging.appendingPathComponent(f.name))
             j.attempt = 0; j.checksumFailures = 0
+            guard j.status == "downloading" else { return } // paused while hashing
             self.nextFile(j)
           } else {
             try? FileManager.default.removeItem(at: tmp)
             j.checksumFailures += 1
             if j.checksumFailures >= 2 {
               j.checksumFailures = 0
-              j.mirror += 1; j.attempt = 0
+              self.switchMirror(j)
               if j.mirror >= f.urls.count {
                 self.fail(j, DownloadError("checksum", "\(f.name): SHA-256 mismatch", ["file": f.name])); return
               }
             }
+            guard j.status == "downloading" else { return }
             self.nextFile(j)
           }
         }
@@ -584,11 +652,27 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     guard let error = error else { return }
     q.async {
+      let ns = error as NSError
+      let resume = ns.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+      if ns.code == NSURLErrorCancelled {
+        // Our own cancel (pause/cancel/delete), or the user force-quit the app
+        // while it was gone: keep the resume data for the job's next attempt.
+        let id = task.taskDescription?.split(separator: "|").first.map(String.init)
+        if let id = id, let j = self.jobs[id], j.stopping == nil, j.task == nil || j.task === task {
+          let name = task.taskDescription?.split(separator: "|").dropFirst().first.map(String.init)
+          if let d = resume, let n = name, JobSpec.isSafeName(n) {
+            try? d.write(to: self.store.stagingDir(id).appendingPathComponent("\(n).resume"))
+          }
+          if j.task === task {
+            j.task = nil
+            self.retry(j, "cancelled by the system", fatalForMirror: false)
+          }
+        }
+        return
+      }
       guard let j = self.job(for: task), j.stopping == nil else { return }
       j.task = nil
-      let ns = error as NSError
-      if let d = ns.userInfo[NSURLSessionDownloadTaskResumeData] as? Data { try? d.write(to: self.resumeURL(j)) }
-      if ns.code == NSURLErrorCancelled { return }
+      if let d = resume { try? d.write(to: self.resumeURL(j)) }
       if let posix = (ns.userInfo[NSUnderlyingErrorKey] as? NSError), posix.domain == NSPOSIXErrorDomain, posix.code == Int(ENOSPC) {
         self.fail(j, DownloadError("storage", "storage full", ["needed": j.spec.files[j.fileIndex].size, "available": self.store.freeBytes()]))
         return
@@ -596,6 +680,7 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
       self.retry(j, ns.localizedDescription, fatalForMirror: false)
     }
   }
+
 
   func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
     q.async {
@@ -610,7 +695,13 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
                   newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
     func origin(_ u: URL?) -> String { "\(u?.scheme ?? "")://\(u?.host ?? ""):\(u?.port ?? -1)" }
     guard let from = task.originalRequest?.url else { completionHandler(request); return }
-    if request.url?.scheme == "http" && from.scheme == "https" { completionHandler(nil); return }
+    if request.url?.scheme == "http" && from.scheme == "https" {
+      // Refuse the downgrade and move on to the next mirror right away.
+      q.async { if let j = self.job(for: task) { j.task = nil; self.retry(j, "redirect to http", fatalForMirror: true) } }
+      task.cancel()
+      completionHandler(nil)
+      return
+    }
     if origin(from) == origin(request.url) { completionHandler(request); return }
     var r = request
     for k in task.originalRequest?.allHTTPHeaderFields?.keys ?? [:].keys where k.lowercased() != "accept-encoding" {
@@ -619,7 +710,19 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     completionHandler(r)
   }
 
+  private var sessionEventsDone = false
+
   func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+    q.async {
+      self.sessionEventsDone = true
+      self.flushBackgroundCompletion()
+    }
+  }
+
+  /// Tell the system we are done only after verification and the next task are set up.
+  private func flushBackgroundCompletion() {
+    guard sessionEventsDone, pendingWork == 0 else { return }
+    sessionEventsDone = false
     DispatchQueue.main.async {
       self.backgroundCompletion?()
       self.backgroundCompletion = nil

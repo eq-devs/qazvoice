@@ -1,6 +1,44 @@
 import AVFoundation
 import Foundation
 
+/// One owner of the shared AVAudioSession for players and the microphone:
+/// the session is deactivated only when the last user releases it, and the
+/// category is chosen for everything currently active.
+enum SessionOwner {
+  private static let lock = NSLock()
+  private static var players = 0
+  private static var mics = 0
+
+  private static func apply() {
+    let s = AVAudioSession.sharedInstance()
+    if mics > 0 {
+      // Recording (with or without playback): no voice processing, speaker output.
+      let mode: AVAudioSession.Mode = players > 0 ? .default : .measurement
+      try? s.setCategory(.playAndRecord, mode: mode, options: [.defaultToSpeaker, .allowBluetooth])
+    } else if players > 0 {
+      try? s.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+    }
+  }
+
+  static func acquire(mic: Bool) throws {
+    lock.lock(); defer { lock.unlock() }
+    let wasIdle = players + mics == 0
+    if mic { mics += 1 } else { players += 1 }
+    // Change the category only when it is not already what we need
+    // (switching it mid-playback interrupts the running engine).
+    if wasIdle || (mic && mics == 1) { apply() }
+    try AVAudioSession.sharedInstance().setActive(true)
+  }
+
+  static func release(mic: Bool) {
+    lock.lock(); defer { lock.unlock() }
+    if mic { mics = max(0, mics - 1) } else { players = max(0, players - 1) }
+    if players + mics == 0 {
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+  }
+}
+
 /// Streams 16-bit mono PCM through AVAudioEngine. `write` calls back once fewer
 /// than `maxQueuedSeconds` of audio wait (back-pressure for the synthesizer);
 /// `finish` calls back when everything has been heard. Reports position/level ~20×/s.
@@ -20,6 +58,10 @@ final class PcmPlayer {
   private var stopped = false
   private let maxQueued: AVAudioFramePosition
   private let onPosition: (Int64, Double) -> Void
+  private var holdsSession = false
+  private var observers: [NSObjectProtocol] = []
+  /// Node time keeps running while nothing is queued; this maps it back to audio heard.
+  private var timeOffset: Int64 = 0
 
   init(rate: Int, onPosition: @escaping (Int64, Double) -> Void) throws {
     self.rate = Double(rate)
@@ -29,15 +71,28 @@ final class PcmPlayer {
       throw DownloadError("audio", "unsupported sample rate \(rate)")
     }
     format = f
-    let session = AVAudioSession.sharedInstance()
-    if session.category != .playAndRecord {
-      try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-    }
-    try? session.setActive(true)
+    try? SessionOwner.acquire(mic: false)
+    holdsSession = true
     engine.attach(node)
     engine.connect(node, to: engine.mainMixerNode, format: format)
-    try engine.start()
+    do {
+      try engine.start()
+    } catch {
+      SessionOwner.release(mic: false)
+      holdsSession = false
+      throw error
+    }
     node.play()
+    // A call, Siri or a route change stops the engine: end playback so no
+    // caller waits forever for buffers that will never play.
+    let nc = NotificationCenter.default
+    observers.append(nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { [weak self] n in
+      let t = (n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
+      if t == .began { DispatchQueue.global().async { self?.stop() } }
+    })
+    observers.append(nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+      DispatchQueue.global().async { self?.stop() }
+    })
     let t = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
     t.schedule(deadline: .now(), repeating: .milliseconds(50))
     t.setEventHandler { [weak self] in self?.report() }
@@ -55,7 +110,7 @@ final class PcmPlayer {
     // lock while holding the node's own (lock-order inversion otherwise).
     let rendered = headFrames()
     lock.lock()
-    let head = min(rendered, Int64(scheduled))
+    let head = max(Int64(played), min(rendered - timeOffset, Int64(scheduled)))
     let level = levels.indices.contains(Int(head / 512)) ? levels[Int(head / 512)] : 0
     let done = stopped
     lock.unlock()
@@ -71,8 +126,13 @@ final class PcmPlayer {
       let s = raw.bindMemory(to: Int16.self)
       for i in 0..<n { out[i] = Float(Int16(littleEndian: s[i])) / 32768 }
     }
+    let raw = headFrames()
     lock.lock()
     if stopped { lock.unlock(); done(); return }
+    if queuedFrames == 0 {
+      // The queue ran dry (synthesis was slower than playback): restart the clock here.
+      timeOffset = raw - Int64(played)
+    }
     var i = 0
     while i < n {
       var peak: Float = 0
@@ -127,9 +187,11 @@ final class PcmPlayer {
     lock.unlock()
     timer?.cancel(); timer = nil
     onPosition(Int64(played), 0)
+    observers.forEach { NotificationCenter.default.removeObserver($0) }
+    observers.removeAll()
     node.stop()
     engine.stop()
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    if holdsSession { holdsSession = false; SessionOwner.release(mic: false) }
   }
 }
 
@@ -140,16 +202,23 @@ final class Mic {
   private var pending = Data()
   private let rate: Double
   private let onChunk: (Data) -> Void
+  private let onError: (String) -> Void
+  private var holdsSession = false
+  private var observer: NSObjectProtocol?
 
-  init(rate: Int, onChunk: @escaping (Data) -> Void) {
+  init(rate: Int, onChunk: @escaping (Data) -> Void, onError: @escaping (String) -> Void) {
     self.rate = Double(rate)
     self.onChunk = onChunk
+    self.onError = onError
   }
 
   func start() throws {
-    let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
-    try session.setActive(true)
+    try SessionOwner.acquire(mic: true)
+    holdsSession = true
+    observer = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { [weak self] n in
+      let t = (n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
+      if t == .began { self?.onError("recording interrupted") }
+    }
     let input = engine.inputNode
     let inFormat = input.outputFormat(forBus: 0)
     guard inFormat.sampleRate > 0,
@@ -179,13 +248,19 @@ final class Mic {
       }
     }
     engine.prepare()
-    try engine.start()
+    do {
+      try engine.start()
+    } catch {
+      stop()
+      throw error
+    }
   }
 
   func stop() {
+    if let o = observer { NotificationCenter.default.removeObserver(o); observer = nil }
     engine.inputNode.removeTap(onBus: 0)
     engine.stop()
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    if holdsSession { holdsSession = false; SessionOwner.release(mic: true) }
   }
 }
 
@@ -194,7 +269,15 @@ enum AudioFiles {
 
   /// Any audio/video file AVFoundation can read → interleaved s16le PCM at the source rate.
   static func decode(input: String, output: URL, cancelled: () -> Bool, progress: (Double) -> Void) throws -> Decoded {
-    let url = input.hasPrefix("file://") ? URL(string: input)! : URL(fileURLWithPath: input)
+    let url: URL
+    if input.hasPrefix("file://") {
+      guard let u = URL(string: input) ?? URL(string: input.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "") else {
+        throw DownloadError("audio", "bad file URL")
+      }
+      url = u
+    } else {
+      url = URL(fileURLWithPath: input)
+    }
     let asset = AVURLAsset(url: url)
     guard let track = asset.tracks(withMediaType: .audio).first else { throw DownloadError("audio", "no audio track") }
     let duration = CMTimeGetSeconds(asset.duration)
